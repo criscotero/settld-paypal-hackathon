@@ -1,0 +1,1877 @@
+openapi: 3.1.0
+info:
+  title: Settld API
+  version: 0.18.0
+  summary: Public HTTP contract between apps/web and apps/api.
+  description: |
+    Shared contract for features 001 to 005, served only by Core API (NestJS). Paths marked "Proxied to the Engine"
+    are fulfilled by the Python Engine over internal-api.yaml. Each path declares its owning feature in `x-owner`.
+    State names, transition IDs (SM-Txx) and guard IDs (G-*) refer to milestone-state-machine.md.
+    Errors follow errors.md (RFC 9457 problem details).
+
+    Conventions:
+    - Money is always `Money` (integer minor units plus ISO 4217 currency). No floats.
+    - Every POST that creates something or requests a transition requires `Idempotency-Key`.
+    - Custom actions use the `resource:action` form (for example `/milestones/{id}:start`).
+servers:
+  - url: http://localhost:4000/v1
+    description: Local
+  - url: https://api.staging.settld.app/v1
+    description: Staging (PayPal sandbox)
+security:
+  - clerk: []
+
+tags:
+  - { name: Accounts, description: "Current user and connections (gap G-1: no feature brief yet)" }
+  - { name: Contracts, description: "001 Contracts and acceptance criteria" }
+  - { name: AI, description: "001 Criteria builder" }
+  - { name: Milestones, description: "002 Payments and milestone state machine" }
+  - { name: Verification, description: "003 Verification engine and Evidence Report" }
+  - { name: Objections, description: "004 Objection window, disputes and release" }
+  - { name: Inbox, description: "005 Action inbox, dashboards and notifications" }
+  - { name: Webhooks, description: "Inbound provider webhooks (no session auth)" }
+
+paths:
+  # ---------------------------------------------------------------- Accounts
+  /me:
+    get:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: getMe
+      summary: Get me
+      responses:
+        "200": { description: Current user, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /me/roles:
+    put:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: setMyRoles
+      summary: Choose roles (onboarding step 1)
+      description: FR-102. BUYER, SELLER, COLLABORATOR (ADR-0009) or a combination. REVIEWER and ADMIN are never self-assigned and are kept as they are. SELLER and COLLABORATOR both need PayPal partner onboarding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roles]
+              properties: { roles: { type: array, minItems: 1, uniqueItems: true, items: { enum: [BUYER, SELLER, COLLABORATOR] } } }
+      responses:
+        "200": { description: Updated user, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/reviewer-application:
+    post:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: applyAsReviewer
+      summary: Apply to become a Reviewer
+      description: Allowed during onboarding and after it. Grants no permission (DM-INV-9). Applying again while PENDING or APPROVED changes nothing. After a rejection, allowed 30 days later. A suspended Reviewer cannot apply.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, properties: { motivation: { type: string, maxLength: 1000 } } } } }
+      responses:
+        "200": { description: The application, content: { application/json: { schema: { $ref: "#/components/schemas/ReviewerApplicationStatus" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /reviewer-applications:
+    get:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: listReviewerApplications
+      summary: Reviewer applications
+      description: ADMIN only. Oldest first, at most 100.
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/ReviewerApplicationState" } }
+      responses:
+        "200": { description: Applications, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/ReviewerApplication" } } } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /reviewer-applications/{applicationId}:decide:
+    parameters:
+      - { name: applicationId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: decideReviewerApplication
+      summary: Approve, reject, suspend or reactivate
+      description: ADMIN only, and not on their own application. Changes the REVIEWER role in the same transaction. A decision not allowed from the current status is INVALID_TRANSITION.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, reason]
+              properties:
+                decision: { enum: [APPROVE, REJECT, SUSPEND, REACTIVATE] }
+                reason: { type: string, minLength: 10, maxLength: 2000 }
+      responses:
+        "200": { description: The application, content: { application/json: { schema: { $ref: "#/components/schemas/ReviewerApplication" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/profile:
+    put:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: setMyProfile
+      summary: Identification data (onboarding step 2)
+      description: Minimum personal data (constitution XI). acceptTerms must be true; its time is recorded (constitution XIII).
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ProfileInput" } } }
+      responses:
+        "200": { description: Updated user, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/professional-profile:
+    put:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: setMyProfessionalProfile
+      summary: What I do (sellers and collaborators, ADR-0009)
+      description: Headline, professions, skills, bio, link, and whether to appear in the directory (opt-in, constitution XI).
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ProfessionalProfile" } } }
+      responses:
+        "200": { description: Updated user, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /directory:
+    get:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: searchDirectory
+      summary: Find collaborators
+      description: |
+        Only users with inDirectory true, onboarding complete and PayPal ready. Never returns emails. 20 per page,
+        newest profile first. Matches q against display name, headline and skills (case-insensitive). A q that
+        contains "@" is an email address instead: it matches only the listed user whose email is exactly that,
+        without case, and never part of one, so the directory cannot be used to discover addresses.
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 254 } }
+        - { name: profession, in: query, schema: { $ref: "#/components/schemas/Profession" } }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: A page of people
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/DirectoryEntry" } }
+                  nextCursor: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/connections/paypal:onboard:
+    post:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: startPaypalOnboarding
+      summary: Start PayPal seller onboarding
+      description: |
+        SELLER only. Returns the PayPal partner-referral link (FR-101, FR-1.2) with tracking_id = User.id.
+        PayPal sends the seller back to the web app, which then calls paypal:onboard-complete.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "200":
+          description: Onboarding link
+          content: { application/json: { schema: { type: object, required: [url], properties: { url: { type: string, format: uri } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/connections/paypal:onboard-complete:
+    post:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: completePaypalOnboarding
+      summary: Confirm PayPal seller onboarding
+      description: |
+        Core API asks PayPal which merchant finished onboarding with tracking_id = User.id, and whether it can
+        receive payments. The merchant ID in PayPal's return URL is never trusted: anyone can type one.
+        409 PAYPAL_NOT_CONNECTED when PayPal does not confirm it yet.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "200": { description: Updated user, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/connections/paypal-login:start:
+    post:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: startPaypalLogin
+      summary: Start Log in with PayPal (buyer link)
+      description: Returns PayPal's authorize URL. `state` is generated and checked by the web app (CSRF).
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [state], properties: { state: { type: string, minLength: 16 } } } } }
+      responses:
+        "200":
+          description: Authorize link
+          content: { application/json: { schema: { type: object, required: [url], properties: { url: { type: string, format: uri } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/connections/paypal-login:complete:
+    post:
+      tags: [Accounts]
+      x-owner: "000"
+      operationId: completePaypalLogin
+      summary: Finish Log in with PayPal
+      description: Core API exchanges the code with PayPal and stores the PayPal account id and email. Tokens are not stored.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [code], properties: { code: { type: string, minLength: 1 } } } } }
+      responses:
+        "200": { description: Updated user, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  # ---------------------------------------------------------------- Contracts (001)
+  /contracts:
+    get:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: listContracts
+      summary: List contracts
+      parameters:
+        - { name: role, in: query, schema: { enum: [BUYER, SELLER, COLLABORATOR] } }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: Contracts where the caller is a party
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ContractSummary" } }
+                  nextCursor: { type: [string, "null"] }
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: createContract
+      summary: Create contract
+      description: Creates a contract and its first draft version. Caller becomes the buyer.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ContractDraftInput" } } }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    get:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: getContract
+      summary: Get contract
+      responses:
+        "200": { description: Contract with current version, content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}/draft:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    put:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: replaceDraft
+      summary: Replace draft
+      description: |
+        Replaces the content of the current draft version. Rejected when the current version is LOCKED (use :amend).
+        When the current version is PENDING_APPROVAL, it becomes SUPERSEDED (its approvals no longer count) and a new
+        DRAFT version N+1 is created with `parentVersionId` = N; approving the superseded version returns STALE_STATE.
+      parameters:
+        - { name: If-Match, in: header, required: true, description: "Current draft version number", schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ContractDraftInput" } } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/ContractVersion" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}/draft:submit:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: submitDraft
+      summary: Submit draft
+      description: Freezes the draft as PENDING_APPROVAL and computes its snapshot hash. Emits contracts.version.submitted.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "200": { description: Pending approval, content: { application/json: { schema: { $ref: "#/components/schemas/ContractVersion" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}:amend:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: amendContract
+      summary: Amend contract
+      description: Creates a new draft from the locked version. Unfunded milestones go back to DRAFT (SM-T02). Funded milestones cannot be amended in the MVP (Q-SM-5).
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "201": { description: New draft, content: { application/json: { schema: { $ref: "#/components/schemas/ContractVersion" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}:publish:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: publishContract
+      summary: Publish as an open project
+      description: |
+        Buyer only (ADR-0018). In one transaction: submits the version if it is still a draft, records the buyer's
+        approval, and lists the contract for 30 days. Refused if the contract has a seller or a live invitation, or
+        if the buyer already has 10 published projects. Moves no money.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: integer, minimum: 1, description: "The version the buyer saw. Another one answers STALE_STATE." }
+                acknowledgeLowVerifiability: { type: boolean, default: false }
+      responses:
+        "200": { description: Published, content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}:unpublish:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: unpublishContract
+      summary: Withdraw an open project
+      description: Buyer only, while nobody has taken it (ADR-0018). The version can be edited again.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "200": { description: Withdrawn, content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}:take:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: takeContract
+      summary: Take an open project
+      description: |
+        Seller only (ADR-0018). In one transaction: the caller becomes the seller and approves the buyer's exact
+        terms, which locks the version (SM-T01). Requires a PayPal account that can receive payments. Limited to 10
+        in 24 hours per seller. Moves no money: the buyer funds next. A project that was never published or was
+        withdrawn answers NOT_FOUND; one already taken or expired answers INVALID_TRANSITION.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, snapshotHash]
+              properties:
+                version: { type: integer, minimum: 1 }
+                snapshotHash: { type: string, pattern: "^sha256:[a-f0-9]{64}$", description: "The hash on screen when the seller decided." }
+                acknowledgeLowVerifiability: { type: boolean, default: false }
+      responses:
+        "200": { description: Taken and agreed, content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /open-projects:
+    get:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: listOpenProjects
+      summary: List open projects
+      description: |
+        For users who finished onboarding (ADR-0018). Published, without a seller, not expired, and with every due
+        date in the future. Newest first, at most 20 per page; a page can hold fewer even
+        when nextCursor is set. Never returns emails.
+      parameters: [{ $ref: "#/components/parameters/Cursor" }]
+      responses:
+        "200":
+          description: A page of open projects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/OpenProjectSummary" } }
+                  nextCursor: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /open-projects/{contractId}:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    get:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: getOpenProject
+      summary: Read an open project
+      description: The full terms a seller accepts by taking it. Anything not currently listed answers NOT_FOUND.
+      responses:
+        "200": { description: The open project, content: { application/json: { schema: { $ref: "#/components/schemas/OpenProject" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}/invitations:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: inviteSeller
+      summary: Invite seller
+      description: |
+        Inviting an address that already has a pending invitation to this contract renews it (seven more days) and
+        sends the mail again, instead of creating a second invitation. Every send, first or repeated, counts toward
+        the buyer's daily limit (RATE_LIMITED).
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email }, locale: { $ref: "#/components/schemas/Locale" } } } } }
+      responses:
+        "202": { description: Invitation sent }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}/team:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: addTeamMember
+      summary: Add a collaborator to the contract
+      description: |
+        Seller only. Makes a directory user a party of the contract (ContractParty, COLLABORATOR), so the seller can put
+        them in the draft's team and they can see and approve it (ADR-0009). The user must have the COLLABORATOR or
+        SELLER role and PayPal ready. At most 4 collaborators (5 team members with the seller). Inviting someone who is
+        not in the directory by email is out of hackathon scope.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [userId], properties: { userId: { type: string, format: uuid } } } } }
+      responses:
+        "201": { description: Added, content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /invitations/{token}:accept:
+    parameters: [{ name: token, in: path, required: true, schema: { type: string } }]
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: acceptInvitation
+      summary: Accept invitation
+      description: Caller becomes the contract's seller. Requires a PayPal connection able to receive payments.
+      responses:
+        "200": { description: Accepted, content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/invitations:
+    get:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: listMyInvitations
+      summary: List my pending seller invitations
+      description: |
+        Invitations sent to the caller's email that can still be accepted: not accepted, not expired, and their contract
+        still has no seller. The email is the one Clerk verified for the caller (User.email), compared without case.
+        Newest first. The token is never returned; these are accepted with acceptMyInvitation.
+      responses:
+        "200":
+          description: Pending invitations
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/PendingInvitation" } } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/invitations/{invitationId}:
+    parameters: [{ name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: getMyInvitation
+      summary: Preview a contract I was invited to
+      description: |
+        Read-only preview of the invited contract's current version, so the seller can decide before accepting:
+        title, description, terms, milestones and criteria. Authorized like acceptMyInvitation (the caller's verified
+        email) and only while the invitation is pending; anything else is NOT_FOUND. The team is left out: the seller
+        builds it after accepting. getContract stays for the contract's parties only.
+      responses:
+        "200": { description: Preview, content: { application/json: { schema: { $ref: "#/components/schemas/InvitationPreview" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/invitations/{invitationId}:accept:
+    parameters: [{ name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: acceptMyInvitation
+      summary: Accept an invitation sent to my email
+      description: |
+        Same rules and result as acceptInvitation, proven by the caller's verified email instead of the link's token:
+        the invitation's email must equal the caller's User.email (without case). Any other invitation answers
+        NOT_FOUND, so the endpoint does not tell whether an id exists.
+      responses:
+        "200": { description: Accepted, content: { application/json: { schema: { $ref: "#/components/schemas/Contract" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}/versions:
+    parameters: [{ $ref: "#/components/parameters/ContractId" }]
+    get:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: listVersions
+      summary: List versions
+      description: Full version history, visible to both parties.
+      responses:
+        "200":
+          description: Versions, newest first
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ContractVersion" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}/versions/{version}:
+    parameters:
+      - { $ref: "#/components/parameters/ContractId" }
+      - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    get:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: getVersion
+      summary: Get version
+      parameters:
+        - { name: diffFrom, in: query, description: "Include a structured diff from this version (change highlighting)", schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: Version, content: { application/json: { schema: { $ref: "#/components/schemas/ContractVersion" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /contracts/{contractId}/versions/{version}:approve:
+    parameters:
+      - { $ref: "#/components/parameters/ContractId" }
+      - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    post:
+      tags: [Contracts]
+      x-owner: "001"
+      operationId: approveVersion
+      summary: Approve version
+      description: |
+        Records the caller's approval of exactly this snapshot hash. When both parties have approved the same hash
+        the version is LOCKED and SM-T01 runs for each milestone. Milestones with verifiability below 0.6 require
+        `acknowledgeLowVerifiability: true`.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [snapshotHash]
+              properties:
+                snapshotHash: { $ref: "#/components/schemas/Sha256" }
+                acknowledgeLowVerifiability: { type: boolean, default: false }
+      responses:
+        "200": { description: Approval recorded, content: { application/json: { schema: { $ref: "#/components/schemas/ContractVersion" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  # ---------------------------------------------------------------- AI (001)
+  /ai/criteria:suggest:
+    post:
+      tags: [AI]
+      x-owner: "001"
+      operationId: suggestCriteria
+      summary: Suggest criteria
+      description: |
+        Returns AI-suggested criteria for one milestone that may not be saved yet (ADR-0016). Proxied to the Engine
+        (internal-api.yaml). Nothing is saved to the contract. Limited per user and per day; over the limit it answers
+        RATE_LIMITED. It takes no Idempotency-Key: nothing is written, and holding a key's transaction open during a
+        model call would tie up a database connection the payment routes need.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 140 }
+                description: { type: string, maxLength: 5000 }
+                contractTitle: { type: string, maxLength: 140 }
+                locale: { enum: [en, es], default: en }
+      responses:
+        "200":
+          description: Suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [suggestionId, criteria, ambiguities, notes, verifiabilityScore]
+                properties:
+                  suggestionId: { type: string, format: uuid, description: "AiVerdictRecord id" }
+                  criteria:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/CriterionInput"
+                        - type: object
+                          required: [rationale]
+                          properties:
+                            rationale: { type: string }
+                  ambiguities: { type: array, items: { $ref: "#/components/schemas/Ambiguity" } }
+                  notes: { type: string }
+                  verifiabilityScore: { type: number, minimum: 0, maximum: 1 }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /ai/ambiguities:detect:
+    post:
+      tags: [AI]
+      x-owner: "001"
+      operationId: detectAmbiguities
+      summary: Detect ambiguities
+      description: Proxied to the Engine (internal-api.yaml).
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [text], properties: { text: { type: string, maxLength: 5000 } } } } }
+      responses:
+        "200":
+          description: Ambiguities
+          content: { application/json: { schema: { type: object, required: [ambiguities], properties: { ambiguities: { type: array, items: { $ref: "#/components/schemas/Ambiguity" } } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  # ---------------------------------------------------------------- Milestones and payments (002)
+  /milestones/{milestoneId}:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    get:
+      tags: [Milestones]
+      x-owner: "002"
+      operationId: getMilestone
+      summary: Get milestone
+      responses:
+        "200": { description: Milestone with runtime state, content: { application/json: { schema: { $ref: "#/components/schemas/Milestone" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}/fund:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    post:
+      tags: [Milestones]
+      x-owner: "002"
+      operationId: createFundingOrder
+      summary: Create funding order
+      description: |
+        Creates one PayPal order (intent AUTHORIZE) per team member, each paid to that member (ADR-0009). Buyer only.
+        Milestone must be APPROVED. `orders` lists them in team order with their status; the buyer approves the first one
+        still `ORDER_CREATED` at its `approveUrl`, PayPal sends them back to `/milestones/{id}/paypal-return?token=<orderId>`,
+        the web app calls fund:confirm and then this again for the next one. Calling it again returns the same orders.
+        The top-level fields describe the next order to approve, for clients that handle one at a time.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      responses:
+        "200":
+          description: Order created; shows the fee before the buyer approves in PayPal
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [paypalOrderId, approveUrl, amount, platformFee, sellerReceives, orders]
+                properties:
+                  paypalOrderId: { type: string, description: "The next order to approve" }
+                  approveUrl: { type: string, format: uri, description: "PayPal page where the buyer approves the next hold" }
+                  amount: { $ref: "#/components/schemas/Money", description: "Whole milestone" }
+                  platformFee: { $ref: "#/components/schemas/Money" }
+                  sellerReceives: { $ref: "#/components/schemas/Money", description: "Whole team, after fees" }
+                  holdValidUntilEstimate: { type: string, format: date-time }
+                  orders:
+                    type: array
+                    minItems: 1
+                    maxItems: 5
+                    items:
+                      type: object
+                      required: [holdId, payeeUserId, payeeName, amount, paypalOrderId, approveUrl, holdStatus]
+                      properties:
+                        holdId: { type: string, format: uuid }
+                        payeeUserId: { type: string, format: uuid }
+                        payeeName: { type: string }
+                        amount: { $ref: "#/components/schemas/Money" }
+                        paypalOrderId: { type: string }
+                        approveUrl: { type: string, format: uri }
+                        holdStatus: { $ref: "#/components/schemas/HoldStatus" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}/fund:confirm:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    post:
+      tags: [Milestones]
+      x-owner: "002"
+      operationId: confirmFunding
+      summary: Confirm funding
+      description: Authorizes the approved PayPal order and applies SM-T03.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [paypalOrderId], properties: { paypalOrderId: { type: string } } } } }
+      responses:
+        "200": { description: Funded, content: { application/json: { schema: { $ref: "#/components/schemas/Milestone" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}:start:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    post:
+      tags: [Milestones]
+      x-owner: "002"
+      operationId: startWork
+      summary: Start work
+      description: Seller starts work (SM-T04).
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }, { $ref: "#/components/parameters/IfMatchState" }]
+      responses:
+        "200": { description: In progress, content: { application/json: { schema: { $ref: "#/components/schemas/Milestone" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}:cancel:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    post:
+      tags: [Milestones]
+      x-owner: "002"
+      operationId: cancelMilestone
+      summary: Cancel milestone
+      description: SM-T15 (funded, voids every hold) or SM-T16 (not fully funded, voids the holds already authorized). Not allowed once delivered.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }, { $ref: "#/components/parameters/IfMatchState" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 1, maxLength: 2000 } } } } }
+      responses:
+        "200": { description: Cancelled, content: { application/json: { schema: { $ref: "#/components/schemas/Milestone" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}:surrender:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    post:
+      tags: [Milestones]
+      x-owner: "002"
+      operationId: surrenderMilestone
+      summary: The seller gives up
+      description: From OBJECTED. SM-T28 when nothing was released, SM-T29 when part was. What is still reserved returns to the buyer, and the objection ends as SURRENDERED.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }, { $ref: "#/components/parameters/IfMatchState" }]
+      responses:
+        "200": { description: Given up, content: { application/json: { schema: { $ref: "#/components/schemas/Milestone" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}/payment-events:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    get:
+      tags: [Milestones]
+      x-owner: "002"
+      operationId: listPaymentEvents
+      summary: List payment events
+      responses:
+        "200":
+          description: Ledger entries for this milestone, oldest first
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PaymentEvent" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  # ---------------------------------------------------------------- Verification (003)
+  /milestones/{milestoneId}/submissions:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    get:
+      tags: [Verification]
+      x-owner: "003"
+      operationId: listSubmissions
+      summary: List submissions
+      responses:
+        "200": { description: All attempts, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Submission" } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      tags: [Verification]
+      x-owner: "003"
+      operationId: submitDelivery
+      summary: Submit delivery
+      description: Seller submits evidence; applies SM-T05 (from IN_PROGRESS), SM-T11 (from OBJECTED) or SM-T21 (from PARTIALLY_RELEASED). A REPOSITORY link must be a public GitHub repository (422 REPOSITORY_UNREADABLE otherwise); Core fixes its commitSha here, so later pushes do not change what is evaluated (ADR-0020 decision 1A). A FILE link must name a file uploaded to this milestone (422 FILE_UNKNOWN) and queues dispatch of the run to the Engine. Never fails because the Engine is down.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }, { $ref: "#/components/parameters/IfMatchState" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [evidenceLinks]
+              properties:
+                evidenceLinks: { type: array, minItems: 1, maxItems: 20, items: { $ref: "#/components/schemas/EvidenceLink" } }
+                notes: { type: string, maxLength: 5000 }
+      responses:
+        "201": { description: Submitted, content: { application/json: { schema: { $ref: "#/components/schemas/Submission" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}/delivery-files:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    post:
+      tags: [Verification]
+      x-owner: "003"
+      operationId: uploadDeliveryFile
+      summary: Upload a .zip for a delivery
+      description: "ADR-0020, hackathon version. The seller or a member of the seller's team uploads a .zip of at most 25 MB; it is checked by content (ZIP signature), its entries against the limits (2000 entries, 200 MB uncompressed, ratio 100:1, no absolute paths, no .., no links), and stored under its SHA-256. The same bytes twice give the same fileHash. Uploading does not deliver: the file is delivered when a submission names it in a FILE link. Errors: 413 FILE_TOO_LARGE, 422 FILE_NOT_ZIP, 422 FILE_UNSAFE."
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201": { description: Uploaded, content: { application/json: { schema: { $ref: "#/components/schemas/DeliveryFile" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}/delivery-files/{fileId}:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }, { name: fileId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Verification]
+      x-owner: "003"
+      operationId: downloadDeliveryFile
+      summary: Download a delivered file
+      description: Parties of the contract and the assigned Reviewer. Always served as an attachment (application/zip, Content-Disposition attachment), never as a page.
+      responses:
+        "200": { description: The file, content: { application/zip: { schema: { type: string, format: binary } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /verification-runs/{runId}:
+    parameters: [{ name: runId, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Verification]
+      x-owner: "003"
+      operationId: getEvidenceReport
+      summary: Get evidence report
+      description: The Evidence Report. Core API checks the caller is a party, then proxies the Engine's GET /internal/v1/runs/{runId}. Poll while status is QUEUED or RUNNING (living checklist).
+      responses:
+        "200": { description: Report, content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceReport" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /verification-runs/{runId}/evidence/{snapshotId}:
+    parameters:
+      - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: snapshotId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Verification]
+      x-owner: "003"
+      operationId: getEvidence
+      summary: Get evidence
+      responses:
+        "302": { description: "Redirect to a short-lived signed S3 URL, obtained from the Engine" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  # ---------------------------------------------------------------- Objections and release (004)
+  /milestones/{milestoneId}/approve:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    post:
+      tags: [Objections]
+      x-owner: "004"
+      operationId: approveEarly
+      summary: Approve early
+      description: |
+        Buyer early approval: SM-T08 when every criterion counts, SM-T18 when part stays held. `humanDecisions`
+        approves criteria that do not count on their own (level HUMAN, AI verdicts, UNCERTAIN); every required
+        one must be approved (G-REQUIRED-COUNTED). Criteria left out stay held. To reject one, raise an
+        objection instead.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }, { $ref: "#/components/parameters/IfMatchState" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [humanDecisions]
+              properties:
+                humanDecisions:
+                  type: array
+                  items:
+                    type: object
+                    required: [criterionId, decision]
+                    properties:
+                      criterionId: { type: string, format: uuid }
+                      decision: { const: APPROVED }
+      responses:
+        "200": { description: Released or partly released, content: { application/json: { schema: { $ref: "#/components/schemas/Milestone" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}:accept-partial:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    post:
+      tags: [Milestones]
+      x-owner: "002"
+      operationId: acceptPartialRelease
+      summary: Accept partial release
+      description: |
+        Seller (or Admin) accepts what was released and returns the held remainder to the Buyer (SM-T22,
+        void of the remaining authorization). Only from PARTIALLY_RELEASED, with no capture in flight.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }, { $ref: "#/components/parameters/IfMatchState" }]
+      responses:
+        "200": { description: Closed, content: { application/json: { schema: { $ref: "#/components/schemas/Milestone" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /milestones/{milestoneId}/objections:
+    parameters: [{ $ref: "#/components/parameters/MilestoneId" }]
+    post:
+      tags: [Objections]
+      x-owner: "004"
+      operationId: raiseObjection
+      summary: Raise objection
+      description: SM-T10. At least one criterion and a reason (G-OBJECTION-VALID).
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }, { $ref: "#/components/parameters/IfMatchState" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [criterionIds, reason]
+              properties:
+                criterionIds: { type: array, minItems: 1, items: { type: string, format: uuid } }
+                reason: { type: string, minLength: 20, maxLength: 5000 }
+      responses:
+        "201": { description: Objection raised, content: { application/json: { schema: { $ref: "#/components/schemas/Objection" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /objections:
+    get:
+      tags: [Objections]
+      x-owner: "004"
+      operationId: listEscalatedObjections
+      summary: Escalated objections waiting for a ruling
+      description: REVIEWER or ADMIN only (ADR-0014). The 100 waiting longest, without the contracts the caller is a party to (G-ACTOR-NEUTRAL).
+      responses:
+        "200": { description: Escalated objections, oldest first, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/EscalatedObjection" } } } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /objections/{objectionId}/case:
+    parameters: [{ $ref: "#/components/parameters/ObjectionId" }]
+    get:
+      tags: [Objections]
+      x-owner: "004"
+      operationId: getObjectionCase
+      summary: Everything a Reviewer needs to rule
+      description: REVIEWER or ADMIN only, for an objection that is escalated or was ruled on. Anything else is NOT_FOUND.
+      responses:
+        "200": { description: The case, content: { application/json: { schema: { $ref: "#/components/schemas/ObjectionCase" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /objections/{objectionId}:
+    parameters: [{ $ref: "#/components/parameters/ObjectionId" }]
+    get:
+      tags: [Objections]
+      x-owner: "004"
+      operationId: getObjection
+      summary: Get objection
+      responses:
+        "200": { description: Objection with thread, content: { application/json: { schema: { $ref: "#/components/schemas/Objection" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /objections/{objectionId}/messages:
+    parameters: [{ $ref: "#/components/parameters/ObjectionId" }]
+    post:
+      tags: [Objections]
+      x-owner: "004"
+      operationId: postObjectionMessage
+      summary: Post objection message
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [body], properties: { body: { type: string, minLength: 1, maxLength: 5000 } } } } }
+      responses:
+        "201": { description: Posted }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /objections/{objectionId}:contest:
+    parameters: [{ $ref: "#/components/parameters/ObjectionId" }]
+    post:
+      tags: [Objections]
+      x-owner: "004"
+      operationId: contestObjection
+      summary: Contest objection
+      description: Seller contests, once; the reason is the first message of the thread, for the Reviewer. The escalation timer keeps running (default 5 days).
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 20, maxLength: 5000 } } } } }
+      responses:
+        "200": { description: Contested, content: { application/json: { schema: { $ref: "#/components/schemas/Objection" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /objections/{objectionId}:withdraw:
+    parameters: [{ $ref: "#/components/parameters/ObjectionId" }]
+    post:
+      tags: [Objections]
+      x-owner: "004"
+      operationId: withdrawObjection
+      summary: Withdraw objection
+      description: |
+        Buyer withdraws and releases what counts: SM-T12 when every criterion counts, SM-T20 when part stays
+        held. Optional `humanDecisions`, as in approve, so a required HUMAN criterion can be approved in the
+        same request (G-REQUIRED-COUNTED); without them the withdrawal can only release deterministic passes.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                humanDecisions:
+                  type: array
+                  items:
+                    type: object
+                    required: [criterionId, decision]
+                    properties:
+                      criterionId: { type: string, format: uuid }
+                      decision: { const: APPROVED }
+      responses:
+        "200": { description: Withdrawn and released, content: { application/json: { schema: { $ref: "#/components/schemas/Objection" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /objections/{objectionId}:rule:
+    parameters: [{ $ref: "#/components/parameters/ObjectionId" }]
+    post:
+      tags: [Objections]
+      x-owner: "004"
+      operationId: ruleOnObjection
+      summary: Rule on objection
+      description: Reviewer or admin ruling on an escalated objection. RELEASE is SM-T13. VOID is SM-T14 when nothing was released, SM-T27 when part was. Actor must not be a party (G-ACTOR-NEUTRAL).
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision, reason]
+              properties:
+                decision: { enum: [RELEASE, VOID] }
+                reason: { type: string, minLength: 20, maxLength: 5000 }
+      responses:
+        "200": { description: Ruled, content: { application/json: { schema: { $ref: "#/components/schemas/Objection" } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  # ---------------------------------------------------------------- Inbox and dashboards (005)
+  /inbox:
+    get:
+      tags: [Inbox]
+      x-owner: "005"
+      operationId: getInbox
+      summary: Get inbox
+      description: Only decisions that need the caller now. Each item deep-links to a one-decision screen.
+      responses:
+        "200":
+          description: Inbox
+          content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/InboxItem" } } } } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /payments:
+    get:
+      tags: [Inbox]
+      x-owner: "005"
+      operationId: listPayments
+      summary: List payments
+      description: |
+        The money facts of every contract the caller is a party to (ADR-0017), newest first. Read only. Buyer and seller see all
+        facts of their contracts; a collaborator sees only those of their own hold (ADR-0009, decision 6). `from` and `to` are
+        whole UTC days, both included, compared with `occurredAt`, from 1000-01-01 to 9998-12-31.
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: At most 1000 rows. `truncated` says more exist, so a total over `items` would be partial.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, truncated]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/LedgerEntry" } }
+                  truncated: { type: boolean }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /payments/export.csv:
+    get:
+      tags: [Inbox]
+      x-owner: "005"
+      operationId: exportPayments
+      summary: Export payments
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: "CSV columns: date, contract, milestone, counterparty, event, amount_minor, currency, platform_fee_minor, paypal_id"
+          content: { text/csv: { schema: { type: string } } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  # ---------------------------------------------------------------- Webhooks
+  /webhooks/paypal:
+    post:
+      tags: [Webhooks]
+      x-owner: "002"
+      operationId: receivePaypalWebhook
+      summary: Receive PayPal webhook
+      security: []
+      description: Verified with verify-webhook-signature, stored in the inbox, acknowledged. See events.md section 5.
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: Stored or duplicate }
+        "401": { description: Signature verification failed }
+
+  /webhooks/github:
+    post:
+      tags: [Webhooks]
+      x-owner: "000"
+      operationId: receiveGithubWebhook
+      summary: Receive GitHub webhook
+      security: []
+      description: HMAC SHA-256 verified, stored in Core API's inbox, acknowledged. MVP uses installation events only (events.md section 5).
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: Stored or duplicate }
+        "401": { description: Signature verification failed }
+
+components:
+  securitySchemes:
+    clerk:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Clerk session token (ADR-0006). apps/web reads it on its server with auth().getToken() and sends it as
+        `Authorization: Bearer`. Core API verifies signature, expiry and authorized party; roles come from User, never
+        from the token. The first valid request for a new Clerk user creates its User row.
+    devUser:
+      type: apiKey
+      in: header
+      name: X-Settld-Dev-User
+      description: |
+        Development and tests only (ADR-0001, ADR-0003). Carries a User id and replaces `session` for authentication
+        only; roles come from User and the party check (SB-7) still runs. Accepted only when Core API starts with
+        SETTLD_DEV_AUTH=true, and Core API refuses to start with that flag unless NODE_ENV is `development` or `test`.
+        Not listed in `security`, so no deployed environment advertises it. Never forwarded to the Engine.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+    IfMatchState:
+      name: If-Match
+      in: header
+      required: false
+      description: Milestone stateVersion the user saw (errors.md, STALE_STATE).
+      schema: { type: string }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    ContractId:
+      name: contractId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MilestoneId:
+      name: milestoneId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ObjectionId:
+      name: objectionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Problem:
+      description: Error (errors.md)
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code, requestId]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string }
+        detail: { type: string }
+        requestId: { type: string }
+        context: { type: object }
+
+    PendingInvitation:
+      type: object
+      required: [id, contractId, contractTitle, buyerName, total, invitedAt, expiresAt]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        contractId: { type: string, format: uuid }
+        contractTitle: { type: string, description: "Title of the contract's current version" }
+        buyerName: { type: string, description: "The buyer's display name" }
+        total: { $ref: "#/components/schemas/Money", description: "Sum of the current version's milestone amounts" }
+        invitedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+
+    OpenProjectSummary:
+      type: object
+      required: [contractId, title, buyerName, total, milestoneCount, publishedAt, publishedUntil, isMine]
+      properties:
+        contractId: { type: string, format: uuid }
+        title: { type: string }
+        buyerName: { type: string }
+        total: { $ref: "#/components/schemas/Money" }
+        milestoneCount: { type: integer, minimum: 1 }
+        publishedAt: { type: string, format: date-time }
+        publishedUntil: { type: string, format: date-time }
+        isMine: { type: boolean, description: "The caller is the buyer, who sees the project but cannot take it" }
+
+    OpenProject:
+      allOf:
+        - $ref: "#/components/schemas/OpenProjectSummary"
+        - type: object
+          required: [description, terms, milestones, version, snapshotHash, lowVerifiabilityCount]
+          properties:
+            description: { type: string }
+            terms: { $ref: "#/components/schemas/Terms" }
+            milestones: { type: array, items: { $ref: "#/components/schemas/MilestoneInput" }, description: "As in the published version, with their ids" }
+            version: { type: integer, minimum: 1 }
+            snapshotHash: { type: string }
+            lowVerifiabilityCount: { type: integer, minimum: 0, description: "Above 0, taking requires acknowledgeLowVerifiability" }
+
+    InvitationPreview:
+      allOf:
+        - $ref: "#/components/schemas/PendingInvitation"
+        - type: object
+          required: [description, terms, milestones]
+          properties:
+            description: { type: string }
+            terms: { $ref: "#/components/schemas/Terms" }
+            milestones: { type: array, items: { $ref: "#/components/schemas/MilestoneInput" }, description: "As in the current version, with their ids" }
+
+    Money:
+      type: object
+      required: [amountMinor, currency]
+      additionalProperties: false
+      properties:
+        amountMinor: { type: integer, format: int64, minimum: 0 }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+
+    Sha256:
+      type: string
+      pattern: "^sha256:[a-f0-9]{64}$"
+
+    Locale:
+      enum: [en, es]
+
+    Actor:
+      type: object
+      required: [type, id]
+      properties:
+        type: { enum: [USER, SYSTEM, ADMIN] }
+        id: { type: string }
+
+    ReviewerApplicationState:
+      enum: [PENDING, APPROVED, REJECTED, SUSPENDED]
+
+    ReviewerApplicationStatus:
+      type: object
+      required: [id, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/ReviewerApplicationState" }
+        decisionReason: { type: [string, "null"] }
+        decidedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        canApplyAgainAt: { type: [string, "null"], format: date-time, description: "When a rejected applicant can apply again" }
+
+    ReviewerApplication:
+      allOf:
+        - { $ref: "#/components/schemas/ReviewerApplicationStatus" }
+        - type: object
+          required: [userId, email, displayName, paypalReady]
+          properties:
+            userId: { type: string, format: uuid }
+            email: { type: string, format: email }
+            displayName: { type: string }
+            paypalReady: { type: boolean, description: "Needed to be paid; approving does not require it" }
+            motivation: { type: [string, "null"] }
+
+    User:
+      type: object
+      required: [id, email, displayName, roles, locale, paypalReady, paypalLinked, profile, onboarding]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        displayName: { type: string }
+        roles: { type: array, items: { enum: [BUYER, SELLER, COLLABORATOR, REVIEWER, ADMIN] } }
+        locale: { $ref: "#/components/schemas/Locale" }
+        paypalReady: { type: boolean, description: "Seller can receive payments (partner onboarding confirmed by PayPal)" }
+        paypalLinked: { type: boolean, description: "Buyer linked a PayPal account with Log in with PayPal" }
+        paypalEmail: { type: [string, "null"], description: "Email of the linked PayPal account, for display" }
+        githubConnected: { type: boolean }
+        profile:
+          type: object
+          required: [fullName, country, accountType, businessName, termsAcceptedAt]
+          properties:
+            fullName: { type: [string, "null"] }
+            country: { type: [string, "null"], description: ISO 3166-1 alpha-2 }
+            accountType: { enum: [INDIVIDUAL, BUSINESS, null] }
+            businessName: { type: [string, "null"] }
+            termsAcceptedAt: { type: [string, "null"], format: date-time }
+        professional: { $ref: "#/components/schemas/ProfessionalProfile" }
+        reviewerApplication: { oneOf: [{ $ref: "#/components/schemas/ReviewerApplicationStatus" }, { type: "null" }] }
+        onboarding:
+          type: object
+          required: [completed, nextStep]
+          properties:
+            completed: { type: boolean }
+            nextStep: { $ref: "#/components/schemas/OnboardingStep" }
+
+    OnboardingStep:
+      description: First unfinished step. DONE once every step is complete.
+      enum: [ROLES, PROFILE, PAYPAL, DONE]
+
+    Profession:
+      enum: [PRODUCT_DESIGNER, SOFTWARE_DEVELOPER, AI_ENGINEER, DATA_ANALYST, QA_ENGINEER, PRODUCT_MANAGER, COPYWRITER, DEVOPS_ENGINEER, OTHER]
+
+    ProfessionalProfile:
+      type: object
+      description: What a seller or collaborator does (ADR-0009). Optional for everyone; shown on contracts and in the directory.
+      required: [headline, professions, skills, bio, link, inDirectory]
+      properties:
+        headline: { type: [string, "null"], maxLength: 80 }
+        professions: { type: array, maxItems: 5, uniqueItems: true, items: { $ref: "#/components/schemas/Profession" } }
+        skills: { type: array, maxItems: 12, uniqueItems: true, items: { type: string, minLength: 1, maxLength: 40 } }
+        bio: { type: [string, "null"], maxLength: 400 }
+        link: { type: [string, "null"], format: uri, pattern: "^https://" }
+        inDirectory: { type: boolean, default: false, description: "Opt-in to appear in the directory (constitution XI)" }
+
+    DirectoryEntry:
+      type: object
+      required: [userId, displayName, headline, professions, skills, country]
+      properties:
+        userId: { type: string, format: uuid }
+        displayName: { type: string }
+        headline: { type: [string, "null"] }
+        professions: { type: array, items: { $ref: "#/components/schemas/Profession" } }
+        skills: { type: array, items: { type: string } }
+        country: { type: [string, "null"] }
+
+    TeamMember:
+      type: object
+      required: [userId, role, shareBps]
+      properties:
+        userId: { type: [string, "null"], format: uuid, description: "null is the seller" }
+        role: { type: string, minLength: 1, maxLength: 60 }
+        shareBps: { type: integer, minimum: 1, maximum: 10000 }
+
+    ProfileInput:
+      type: object
+      required: [fullName, displayName, country, locale, accountType, acceptTerms]
+      properties:
+        fullName: { type: string, minLength: 2, maxLength: 120 }
+        displayName: { type: string, minLength: 2, maxLength: 60 }
+        country: { type: string, pattern: "^[A-Z]{2}$", description: ISO 3166-1 alpha-2 }
+        locale: { $ref: "#/components/schemas/Locale" }
+        accountType: { enum: [INDIVIDUAL, BUSINESS] }
+        businessName: { type: [string, "null"], maxLength: 120, description: Required when accountType is BUSINESS }
+        acceptTerms: { const: true }
+
+    MilestoneState:
+      enum: [DRAFT, APPROVED, FUNDED, IN_PROGRESS, VERIFYING, OBJECTION_WINDOW, OBJECTED, PARTIALLY_RELEASED, RELEASED, CLOSED, VOIDED]
+
+    HoldStatus:
+      enum: [NONE, ORDER_CREATED, AUTHORIZED, CAPTURE_PENDING, CAPTURED, CAPTURE_FAILED, VOID_PENDING, VOIDED, EXPIRED]
+
+    CheckType:
+      enum: [GITHUB_PR_MERGED, CI_STATUS_GREEN, TESTS_PASSED, HTTP_PROBE, AI_FEATURE_PRESENT, AI_REQUIREMENT_MET]
+
+    Terms:
+      type: object
+      required: [releaseCountdownSeconds, silenceIsApproval, fundingMode, platformFeeBps]
+      properties:
+        releaseCountdownSeconds:
+          type: integer
+          minimum: 60
+          maximum: 604800
+          default: 172800
+          description: Release countdown before any money moves (constitution XII, decision D6). Never zero.
+        silenceIsApproval: { type: boolean, default: true }
+        fundingMode: { enum: [ONE_AT_A_TIME, ALL_AT_ONCE], default: ONE_AT_A_TIME }
+        platformFeeBps: { type: integer, minimum: 0, maximum: 10000, readOnly: true }
+
+    CriterionInput:
+      type: object
+      required: [text, level, required, weightBps]
+      properties:
+        id: { type: string, format: uuid, description: "Omit for a new criterion" }
+        text: { type: string, minLength: 1, maxLength: 500 }
+        level: { enum: [AUTOMATIC, AI_EVALUATED, HUMAN] }
+        required: { type: boolean, default: true, description: "Gate: nothing is released in a round unless every required criterion counts (G-REQUIRED-COUNTED)." }
+        weightBps:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: Share of the milestone amount paid when this criterion counts. Weights of a milestone sum to 10000 (G-MILESTONE-VALID).
+        checkType: { oneOf: [{ $ref: "#/components/schemas/CheckType" }, { type: "null" }] }
+        checkConfig: { type: [object, "null"], description: "Validated per check type (verification-adapters.md)" }
+        origin: { enum: [AI_SUGGESTED, USER_WRITTEN, AI_SUGGESTED_EDITED] }
+        aiSuggestionId: { type: [string, "null"], format: uuid }
+
+    Criterion:
+      allOf:
+        - $ref: "#/components/schemas/CriterionInput"
+        - type: object
+          required: [id, position]
+          properties:
+            id: { type: string, format: uuid }
+            position: { type: integer }
+
+    MilestoneInput:
+      type: object
+      required: [title, amount, dueDate, criteria]
+      properties:
+        id: { type: string, format: uuid, description: "Omit for a new milestone" }
+        title: { type: string, minLength: 1, maxLength: 140 }
+        description: { type: string, maxLength: 5000 }
+        amount: { $ref: "#/components/schemas/Money" }
+        dueDate: { type: string, format: date }
+        criteria: { type: array, items: { $ref: "#/components/schemas/CriterionInput" } }
+
+    ContractDraftInput:
+      type: object
+      required: [title, currency, terms, milestones]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 140 }
+        description: { type: string, maxLength: 5000 }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        terms: { $ref: "#/components/schemas/Terms" }
+        milestones: { type: array, items: { $ref: "#/components/schemas/MilestoneInput" } }
+        team:
+          type: array
+          minItems: 1
+          maxItems: 5
+          description: |
+            ADR-0009. Exactly one entry with userId null (the seller); every other userId must be a collaborator party of
+            the contract. Shares sum to 10000. Omitted: the seller alone at 100%.
+          items: { $ref: "#/components/schemas/TeamMember" }
+
+    ContractSummary:
+      type: object
+      required: [id, title, status, total, myRole]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        status: { enum: [DRAFT, PENDING_APPROVAL, LOCKED, CANCELLED, COMPLETED] }
+        total: { $ref: "#/components/schemas/Money" }
+        myRole: { enum: [BUYER, SELLER, COLLABORATOR] }
+        counterpartyName: { type: [string, "null"] }
+
+    Contract:
+      allOf:
+        - $ref: "#/components/schemas/ContractSummary"
+        - type: object
+          required: [currentVersion, milestones, publishedUntil]
+          properties:
+            buyerId: { type: string, format: uuid }
+            sellerId: { type: [string, "null"], format: uuid }
+            publishedUntil: { type: [string, "null"], format: date-time, description: "Set while the contract is listed as an open project and has no seller (ADR-0018). A past value means the listing expired." }
+            pendingInvitation:
+              type: [object, "null"]
+              description: |
+                The seller invitation waiting for an answer, so the buyer can see it went out and to whom. Only the buyer
+                gets it; null for everyone else, once a seller accepted, and when no invitation is pending. With more than
+                one pending address, the one sent last.
+              required: [email, expiresAt]
+              properties:
+                email: { type: string, format: email }
+                expiresAt: { type: string, format: date-time }
+            currentVersion: { $ref: "#/components/schemas/ContractVersion" }
+            lockedVersionNumber: { type: [integer, "null"] }
+            lastActivityAt: { type: string, format: date-time, description: "The last recorded change on this contract, to order lists." }
+            milestones: { type: array, items: { $ref: "#/components/schemas/Milestone" } }
+            team:
+              type: array
+              description: |
+                The current version's team with names and profiles (ADR-0009). A collaborator sees every member but only
+                their own shareBps; the others' are null (decision 6).
+              items:
+                type: object
+                required: [userId, displayName, role, shareBps, isSeller, approvedCurrentVersion]
+                properties:
+                  userId: { type: [string, "null"], format: uuid, description: "null for the seller slot before a seller accepts" }
+                  displayName: { type: string }
+                  headline: { type: [string, "null"] }
+                  professions: { type: array, items: { $ref: "#/components/schemas/Profession" } }
+                  role: { type: string }
+                  shareBps: { type: [integer, "null"], minimum: 1, maximum: 10000 }
+                  isSeller: { type: boolean }
+                  approvedCurrentVersion: { type: boolean }
+
+    ContractVersion:
+      type: object
+      required: [id, version, status, snapshot, approvals]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        status: { enum: [DRAFT, PENDING_APPROVAL, LOCKED, SUPERSEDED] }
+        snapshot: { $ref: "#/components/schemas/ContractDraftInput" }
+        snapshotHash: { oneOf: [{ $ref: "#/components/schemas/Sha256" }, { type: "null" }], description: "Set once PENDING_APPROVAL" }
+        approvals:
+          type: array
+          items:
+            type: object
+            required: [partyRole, userId, approvedAt, snapshotHash]
+            properties:
+              partyRole: { enum: [BUYER, SELLER, COLLABORATOR] }
+              userId: { type: string, format: uuid }
+              approvedAt: { type: string, format: date-time }
+              snapshotHash: { $ref: "#/components/schemas/Sha256" }
+        verifiability:
+          type: array
+          items:
+            type: object
+            required: [milestoneId, score, belowThreshold]
+            properties:
+              milestoneId: { type: string, format: uuid }
+              score: { type: number, minimum: 0, maximum: 1 }
+              belowThreshold: { type: boolean, description: "score < 0.6" }
+        diff:
+          type: [object, "null"]
+          description: Present when diffFrom is requested; added, removed and changed paths with author role.
+        createdBy: { $ref: "#/components/schemas/Actor" }
+        createdAt: { type: string, format: date-time }
+
+    Milestone:
+      type: object
+      required: [id, contractId, title, amount, dueDate, state, holdStatus, stateVersion, nextStep]
+      properties:
+        id: { type: string, format: uuid }
+        contractId: { type: string, format: uuid }
+        position: { type: integer }
+        title: { type: string }
+        description: { type: string }
+        amount: { $ref: "#/components/schemas/Money" }
+        platformFee: { oneOf: [{ $ref: "#/components/schemas/Money" }, { type: "null" }] }
+        dueDate: { type: string, format: date }
+        criteria: { type: array, items: { $ref: "#/components/schemas/Criterion" } }
+        verifiabilityScore: { type: number, minimum: 0, maximum: 1 }
+        state: { $ref: "#/components/schemas/MilestoneState" }
+        holdStatus: { $ref: "#/components/schemas/HoldStatus" }
+        stateVersion: { type: integer }
+        authorizationExpiresAt: { type: [string, "null"], format: date-time }
+        windowEndsAt: { type: [string, "null"], format: date-time }
+        funded: { $ref: "#/components/schemas/Money" }
+        released: { $ref: "#/components/schemas/Money" }
+        returned: { $ref: "#/components/schemas/Money" }
+        held: { description: "funded − released − returned (derived)", $ref: "#/components/schemas/Money" }
+        releases: { type: array, items: { $ref: "#/components/schemas/Release" } }
+        holds:
+          type: array
+          description: One per team member (ADR-0009). A collaborator sees only their own.
+          items:
+            type: object
+            required: [payeeUserId, payeeName, shareBps, funded, released, returned, holdStatus]
+            properties:
+              payeeUserId: { type: string, format: uuid }
+              payeeName: { type: string }
+              shareBps: { type: integer }
+              funded: { $ref: "#/components/schemas/Money" }
+              released: { $ref: "#/components/schemas/Money" }
+              returned: { $ref: "#/components/schemas/Money" }
+              holdStatus: { $ref: "#/components/schemas/HoldStatus" }
+        latestRunId: { type: [string, "null"], format: uuid }
+        openObjectionId: { type: [string, "null"], format: uuid }
+        returnReason:
+          enum: [WINDOW_EXPIRED, VERIFICATION_FAILED, RELEASE_DECLINED, null]
+          description: "Why the last round ended without paying, while the seller has the next step: the countdown ended with nothing to pay (SM-T24, T25), a check failed (SM-T06, T23), or PayPal declined (SM-T26). Null otherwise. Never a decision: it only explains the screen."
+        latestObjectionId: { type: [string, "null"], format: uuid, description: "The most recent objection of this milestone, live or not, so a ruling can be shown after it ends." }
+        nextStep:
+          type: object
+          description: '"Where is my money, and what happens next?" for the caller (constitution XII).'
+          required: [actor, kind]
+          properties:
+            actor: { enum: [BUYER, SELLER, REVIEWER, SYSTEM, NONE] }
+            kind: { type: string, description: "e.g. FUND, START_WORK, SUBMIT, WAIT_FOR_VERIFICATION, APPROVE_OR_OBJECT, RESPOND_TO_OBJECTION, AUTO_RELEASE_AT, FIX_OR_ACCEPT_PARTIAL" }
+            at: { type: [string, "null"], format: date-time }
+
+    Release:
+      type: object
+      description: One capture decided by a release transition (milestone-state-machine.md, E-CAPTURE).
+      required: [id, seq, transitionId, amount, platformFee, countedBps, final, status, decidedAt]
+      properties:
+        id: { type: string, format: uuid }
+        seq: { type: integer, minimum: 1 }
+        transitionId: { type: string, examples: [SM-T18] }
+        amount: { $ref: "#/components/schemas/Money" }
+        platformFee: { $ref: "#/components/schemas/Money" }
+        countedBps: { type: integer, minimum: 0, maximum: 10000 }
+        final: { type: boolean }
+        status: { enum: [PENDING, CAPTURED, FAILED] }
+        decidedAt: { type: string, format: date-time }
+        parts:
+          type: array
+          description: One per team member with a positive part (ADR-0009). A collaborator sees only their own.
+          items:
+            type: object
+            required: [payeeUserId, amount, platformFee, status]
+            properties:
+              payeeUserId: { type: string, format: uuid }
+              amount: { $ref: "#/components/schemas/Money" }
+              platformFee: { $ref: "#/components/schemas/Money" }
+              status: { enum: [PENDING, CAPTURED, FAILED] }
+
+    PaymentEvent:
+      type: object
+      required: [id, type, source, occurredAt]
+      properties:
+        id: { type: string, format: uuid }
+        type: { enum: [ORDER_CREATED, AUTHORIZED, REAUTHORIZED, CAPTURE_REQUESTED, CAPTURED, CAPTURE_DENIED, VOID_REQUESTED, VOIDED, AUTHORIZATION_EXPIRED, REFUNDED, DISPUTE_OPENED, DISPUTE_RESOLVED] }
+        amount: { oneOf: [{ $ref: "#/components/schemas/Money" }, { type: "null" }] }
+        platformFee: { oneOf: [{ $ref: "#/components/schemas/Money" }, { type: "null" }] }
+        releaseId: { type: [string, "null"], format: uuid }
+        paypal: { type: object, additionalProperties: { type: string } }
+        paypalUrl: { $ref: "#/components/schemas/PaypalUrl" }
+        source: { enum: [API_RESPONSE, WEBHOOK, RECONCILIATION] }
+        occurredAt: { type: string, format: date-time }
+
+    PaypalUrl:
+      type: [string, "null"]
+      format: uri
+      description: >-
+        Where the caller finds this fact in their own PayPal account. PayPal gives the payer and the
+        payee different transaction ids, and Settld only learns the payee's, so the buyer gets their
+        activity searched by that id and the payee of the hold gets the capture itself. Null for
+        anyone with no record of it in PayPal (another member's money, a seller who is not the payee),
+        for a fact with no PayPal id, and when the API has no PayPal environment configured.
+
+    LedgerEntry:
+      type: object
+      description: One PaymentEvent with what an auditor needs beside it (ADR-0017). `ledgerEffect` is the only thing that decides whether the row counts as money paid or returned.
+      required: [id, type, occurredAt, source, milestoneId, milestoneTitle, contractId, contractTitle, myRole, counterpartyName, amount, platformFee, ledgerEffect, paypalId, paypalIdKind, paypalUrl, releaseId, criteria, reportHash]
+      properties:
+        id: { type: string, format: uuid }
+        type: { enum: [ORDER_CREATED, AUTHORIZED, REAUTHORIZED, CAPTURE_REQUESTED, CAPTURED, CAPTURE_DENIED, VOID_REQUESTED, VOIDED, AUTHORIZATION_EXPIRED, REFUNDED, DISPUTE_OPENED, DISPUTE_RESOLVED] }
+        occurredAt: { type: string, format: date-time }
+        source: { enum: [API_RESPONSE, WEBHOOK, RECONCILIATION] }
+        milestoneId: { type: string, format: uuid }
+        milestoneTitle: { type: string }
+        contractId: { type: string, format: uuid }
+        contractTitle: { type: string }
+        myRole: { enum: [BUYER, SELLER, COLLABORATOR] }
+        counterpartyName: { type: [string, "null"], description: "For the buyer, who this hold pays; for the others, the buyer." }
+        amount: { oneOf: [{ $ref: "#/components/schemas/Money" }, { type: "null" }] }
+        platformFee: { oneOf: [{ $ref: "#/components/schemas/Money" }, { type: "null" }] }
+        ledgerEffect: { enum: [PAID, RETURNED, NONE] }
+        paypalId: { type: [string, "null"] }
+        paypalIdKind: { enum: [CAPTURE, AUTHORIZATION, ORDER, null] }
+        paypalUrl: { $ref: "#/components/schemas/PaypalUrl" }
+        releaseId: { type: [string, "null"], format: uuid }
+        criteria:
+          type: array
+          description: What this release paid for that earlier releases did not. Empty when the fact has no release.
+          items:
+            type: object
+            required: [criterionId, title, weightBps, verdict, humanApproved]
+            properties:
+              criterionId: { type: string, format: uuid }
+              title: { type: string }
+              weightBps: { type: integer, minimum: 0, maximum: 10000 }
+              verdict: { enum: [PASS, FAIL, UNCERTAIN, NEEDS_HUMAN, null], description: "Null when the release recorded no run." }
+              humanApproved: { type: boolean, description: "A person decided this criterion counts: the buyer approved it, or a reviewer ruled for release." }
+        reportHash: { type: [string, "null"] }
+
+    EvidenceLink:
+      type: object
+      required: [kind, url]
+      properties:
+        kind:
+          description: REPOSITORY is a public GitHub repository; FILE is a .zip uploaded with uploadDeliveryFile (ADR-0019, ADR-0020).
+          enum: [PULL_REQUEST, COMMIT, CI_RUN, URL, OTHER, REPOSITORY, FILE]
+        url: { type: string, format: uri }
+        label: { type: string, maxLength: 140 }
+        commitSha:
+          description: REPOSITORY only. Set by Core API on delivery from the branch head, or kept if the seller gave one; the evaluator reads only this commit. Ignored if the seller sends it for another kind.
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{40}$"
+        fileHash:
+          description: FILE only. The SHA-256 of the uploaded file, which names it on the server. Core API checks the file was uploaded to this milestone by the seller's team.
+          oneOf: [{ $ref: "#/components/schemas/Sha256" }, { type: "null" }]
+
+    EvaluationCheck:
+      type: object
+      required: [requirement, sourceExcerpt, verdict, finding, evidenceRefs, fix, note]
+      properties:
+        requirement: { type: string }
+        sourceExcerpt: { type: string }
+        verdict: { enum: [PASS, FAIL, UNCERTAIN] }
+        finding: { type: string }
+        evidenceRefs: { type: array, items: { type: string, format: uuid } }
+        fix: { type: [string, "null"] }
+        note: { description: Why post-validation changed the verdict, or null, type: [string, "null"] }
+
+    DeliveryFile:
+      type: object
+      required: [id, milestoneId, fileHash, name, sizeBytes, url, uploadedAt]
+      properties:
+        id: { type: string, format: uuid }
+        milestoneId: { type: string, format: uuid }
+        fileHash: { $ref: "#/components/schemas/Sha256" }
+        name: { type: string, maxLength: 200 }
+        sizeBytes: { type: integer }
+        url: { description: Download link for the parties; use it as the FILE EvidenceLink url, type: string, format: uri }
+        uploadedAt: { type: string, format: date-time }
+
+    Submission:
+      type: object
+      required: [id, milestoneId, attempt, evidenceLinks, submittedAt, runId]
+      properties:
+        id: { type: string, format: uuid }
+        milestoneId: { type: string, format: uuid }
+        attempt: { type: integer, minimum: 1 }
+        evidenceLinks: { type: array, items: { $ref: "#/components/schemas/EvidenceLink" } }
+        notes: { type: string }
+        submittedAt: { type: string, format: date-time }
+        runId: { type: string, format: uuid }
+
+    CriterionResult:
+      type: object
+      required: [criterionId, verdict, reason, evidence, source]
+      properties:
+        criterionId: { type: string, format: uuid }
+        verdict: { enum: [PENDING, PASS, FAIL, UNCERTAIN, NEEDS_HUMAN] }
+        reason: { type: string }
+        source: { enum: [ADAPTER, AI] }
+        badge: { enum: [VERIFIED_BY_GITHUB, VERIFIED_BY_CI, VERIFIED_BY_HTTP, VERIFIED_BY_AI, NEEDS_YOUR_APPROVAL, FAILED] }
+        evidence:
+          type: array
+          items:
+            type: object
+            required: [snapshotId, kind, hash, capturedAt]
+            properties:
+              snapshotId: { type: string, format: uuid }
+              kind: { enum: [PR_METADATA, CI_RUN, TEST_REPORT, HTTP_RESPONSE, SCREENSHOT, DIFF, NOTES, REPOSITORY_FILE, DELIVERED_FILE] }
+              hash: { $ref: "#/components/schemas/Sha256" }
+              sourceUrl: { type: [string, "null"] }
+              capturedAt: { type: string, format: date-time }
+        injectionFlagged: { type: boolean }
+        injectionFlags:
+          description: Shown to both parties (ai-outputs.md section 3). excerpt is untrusted text from the evidence.
+          type: array
+          items:
+            type: object
+            required: [evidenceSnapshotId, excerpt, kind]
+            properties:
+              evidenceSnapshotId: { type: string, format: uuid }
+              excerpt: { type: string, maxLength: 300 }
+              kind: { enum: [INSTRUCTION_TO_AI, VERDICT_MANIPULATION, HIDDEN_TEXT, OTHER] }
+        humanDecision: { enum: [APPROVED, REJECTED, null] }
+        checks:
+          description: AI criteria only (ADR-0019), after post-validation; empty otherwise. Text comes from a model that read the seller's content, so it is shown only as text.
+          type: array
+          items: { $ref: "#/components/schemas/EvaluationCheck" }
+
+    EvidenceReport:
+      type: object
+      required: [runId, milestoneId, attempt, status, results]
+      properties:
+        runId: { type: string, format: uuid }
+        milestoneId: { type: string, format: uuid }
+        attempt: { type: integer }
+        status: { enum: [QUEUED, RUNNING, COMPLETED, TIMED_OUT] }
+        outcome: { enum: [PASSED, FAILED, null] }
+        startedAt: { type: [string, "null"], format: date-time }
+        finishedAt: { type: [string, "null"], format: date-time }
+        results: { type: array, items: { $ref: "#/components/schemas/CriterionResult" } }
+        summary:
+          type: [object, "null"]
+          properties:
+            headline: { type: string }
+            summary: { type: string }
+        reportHash: { oneOf: [{ $ref: "#/components/schemas/Sha256" }, { type: "null" }] }
+        shareUrl: { type: [string, "null"], format: uri }
+
+    Ambiguity:
+      type: object
+      required: [term, excerpt, problem, alternatives]
+      properties:
+        term: { type: string }
+        excerpt: { type: string }
+        problem: { type: string }
+        alternatives: { type: array, items: { type: string } }
+
+    Objection:
+      type: object
+      required: [id, milestoneId, runId, criterionIds, reason, status, raisedAt, escalateAt]
+      properties:
+        id: { type: string, format: uuid }
+        milestoneId: { type: string, format: uuid }
+        runId: { type: string, format: uuid }
+        criterionIds: { type: array, items: { type: string, format: uuid } }
+        reason: { type: string }
+        status: { enum: [OPEN, CONTESTED, ESCALATED, WITHDRAWN, SUPERSEDED_BY_RESUBMISSION, RULED_RELEASE, RULED_VOID, SURRENDERED] }
+        raisedAt: { type: string, format: date-time }
+        contestedAt: { type: [string, "null"], format: date-time }
+        escalateAt: { type: string, format: date-time }
+        resolution:
+          type: [object, "null"]
+          properties:
+            by: { $ref: "#/components/schemas/Actor" }
+            at: { type: string, format: date-time }
+            reason: { type: string }
+        messages:
+          type: array
+          items:
+            type: object
+            required: [id, authorId, body, createdAt]
+            properties:
+              id: { type: string, format: uuid }
+              authorId: { type: string, format: uuid }
+              body: { type: string }
+              createdAt: { type: string, format: date-time }
+
+    EscalatedObjection:
+      type: object
+      required: [objection, contractId, contractTitle, milestoneTitle, amount, buyerName, sellerName]
+      properties:
+        objection: { $ref: "#/components/schemas/Objection" }
+        contractId: { type: string, format: uuid }
+        contractTitle: { type: string }
+        milestoneTitle: { type: string }
+        amount: { $ref: "#/components/schemas/Money" }
+        buyerName: { type: string }
+        sellerName: { type: string }
+
+    ObjectionCase:
+      type: object
+      required: [objection, contractId, contractTitle, milestone, buyerName, sellerName, submissions]
+      properties:
+        objection: { $ref: "#/components/schemas/Objection" }
+        contractId: { type: string, format: uuid }
+        contractTitle: { type: string }
+        milestone: { $ref: "#/components/schemas/Milestone" }
+        buyerName: { type: string }
+        sellerName: { type: string }
+        submissions: { type: array, items: { $ref: "#/components/schemas/Submission" } }
+
+    InboxItem:
+      type: object
+      required: [id, kind, title, deepLink, contractId]
+      properties:
+        id: { type: string }
+        kind: { enum: [APPROVE_CONTRACT_VERSION, FUND_MILESTONE, START_WORK, FIX_AND_RESUBMIT, REVIEW_HUMAN_CRITERIA, RESPOND_TO_OBJECTION, RULE_ON_OBJECTION, FUND_AGAIN, CONNECT_PAYPAL] }
+        title: { type: string, description: "Localized" }
+        contractId: { type: string, format: uuid }
+        milestoneId: { type: [string, "null"], format: uuid }
+        amount: { oneOf: [{ $ref: "#/components/schemas/Money" }, { type: "null" }] }
+        dueAt: { type: [string, "null"], format: date-time }
+        deepLink: { type: string, description: "Web path to the one-decision screen" }

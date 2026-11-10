@@ -1,0 +1,14 @@
+{
+  "name": "@settld/engine",
+  "private": true,
+  "description": "Turborepo wrapper: runs the Python Engine's tasks through uv",
+  "scripts": {
+    "dev": "uv run --env-file ../../.env uvicorn settld_engine.main:app --reload --port 8000",
+    "lint": "uv run ruff check . && uv run ruff format --check .",
+    "typecheck": "uv run mypy src tests",
+    "test": "uv run pytest",
+    "test:integration": "uv run --env-file ../../.env pytest",
+    "worker": "uv run --env-file ../../.env procrastinate --app=settld_engine.tasks.app worker --queues=verification",
+    "db:migrate": "uv run --env-file ../../.env alembic upgrade head"
+  }
+}

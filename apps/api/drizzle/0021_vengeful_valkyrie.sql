@@ -1,0 +1,1 @@
+ALTER TABLE "core"."releases" ADD COLUMN "run_id" uuid;

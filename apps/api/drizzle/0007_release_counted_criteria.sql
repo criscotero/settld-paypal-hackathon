@@ -1,0 +1,1 @@
+ALTER TABLE "core"."releases" ADD COLUMN "counted_criterion_ids" uuid[] DEFAULT '{}'::uuid[] NOT NULL;

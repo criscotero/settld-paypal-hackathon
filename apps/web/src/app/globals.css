@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+/* Settld palette: deep navy for structure, teal for "settled" money and actions. */
+@theme {
+  --color-navy: #0b1f33;
+  --color-primary: #0f766e;
+  --color-primary-dark: #115e59;
+  --color-accent: #2dd4bf;
+  --color-accent-soft: #e6f7f4;
+  --color-ink: #10202f;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+body {
+  @apply bg-slate-50 text-ink antialiased;
+}
+
+/* Money and ids line up in columns. */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}

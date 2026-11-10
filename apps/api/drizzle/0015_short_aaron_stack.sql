@@ -1,0 +1,1 @@
+ALTER TABLE "core"."notifications" ALTER COLUMN "user_id" DROP NOT NULL;

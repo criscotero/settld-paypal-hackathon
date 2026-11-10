@@ -1,0 +1,276 @@
+# Settld milestone state machine: machine-readable contract.
+# Source of truth for state-machine tests. Explained in milestone-state-machine.md.
+# Owner: 002 Payments and milestone state machine.
+# 1.0.0 (ADR-0007): proportional release by criterion weight, PARTIALLY_RELEASED and CLOSED,
+# one Release row per capture. CLIENT_APPROVED renamed BUYER_APPROVED (decision D4).
+# 1.1.0 (H2 review): SM-T21 waits for a capture in flight; SM-T26 when PayPal declines the only
+# partial release; SM-INV-5 and SM-INV-10 reworded.
+# 1.2.0: E-VOID returns by capture and refund after a partial capture (PayPal refuses the void, PP-T16).
+# 2.0.0 (ADR-0009): money lives in one Hold per team member; guards and money effects apply per hold.
+# 2.1.0: SM-T16 voids the holds already authorized (a milestone funded only in part can be
+# cancelled); G-NO-ACTIVE-AUTHORIZATION removed.
+# 2.3.0 (ADR-0014): SM-T27 returns the rest when a Reviewer rules after a partial release; SM-T28 and
+# SM-T29 let the Seller give up from OBJECTED; only an escalated objection can be ruled on, and an
+# escalated one can no longer be answered by delivering again.
+version: 2.3.0
+
+states:
+  - { id: DRAFT, terminal: false, holdStatuses: [NONE] }
+  - { id: APPROVED, terminal: false, holdStatuses: [NONE, ORDER_CREATED, EXPIRED, VOIDED] }
+  - { id: FUNDED, terminal: false, holdStatuses: [AUTHORIZED, EXPIRED] }
+  - { id: IN_PROGRESS, terminal: false, holdStatuses: [AUTHORIZED, EXPIRED] }
+  - { id: VERIFYING, terminal: false, holdStatuses: [AUTHORIZED, EXPIRED] }
+  - { id: OBJECTION_WINDOW, terminal: false, holdStatuses: [AUTHORIZED, EXPIRED] }
+  - { id: OBJECTED, terminal: false, holdStatuses: [AUTHORIZED, EXPIRED] }
+  - { id: PARTIALLY_RELEASED, terminal: false, holdStatuses: [AUTHORIZED, EXPIRED] }
+  - { id: RELEASED, terminal: true, holdStatuses: [CAPTURE_PENDING, CAPTURED, CAPTURE_FAILED] }
+  - { id: CLOSED, terminal: true, holdStatuses: [VOID_PENDING, VOIDED, EXPIRED] }
+  - { id: VOIDED, terminal: true, holdStatuses: [NONE, VOID_PENDING, VOIDED, EXPIRED] }
+
+holdStatuses: [NONE, ORDER_CREATED, AUTHORIZED, CAPTURE_PENDING, CAPTURED, CAPTURE_FAILED, VOID_PENDING, VOIDED, EXPIRED]
+
+releaseStatuses: [PENDING, CAPTURED, FAILED]
+
+# Actors: BUYER, SELLER, REVIEWER, ADMIN, SYSTEM
+transitions:
+  - id: SM-T01
+    from: [DRAFT]
+    to: APPROVED
+    event: CONTRACT_VERSION_LOCKED
+    actors: [SYSTEM]
+    guards: [G-LOCKED, G-MILESTONE-VALID]
+    effects: [E-AUDIT, E-EVENT]
+
+  - id: SM-T02
+    from: [APPROVED]
+    to: DRAFT
+    event: CONTRACT_AMENDED
+    actors: [BUYER, SELLER]
+    guards: [G-NO-ACTIVE-ORDER]
+    effects: [E-AUDIT, E-EVENT]
+
+  - id: SM-T03
+    from: [APPROVED]
+    to: FUNDED
+    event: AUTHORIZATION_CONFIRMED
+    actors: [BUYER, SYSTEM]
+    guards: [G-LOCKED, G-AUTH-MATCHES, G-AUTH-ACTIVE]
+    effects: [E-LEDGER, E-SCHEDULE-AUTH-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T04
+    from: [FUNDED]
+    to: IN_PROGRESS
+    event: WORK_STARTED
+    actors: [SELLER]
+    guards: [G-AUTH-ACTIVE]
+    effects: [E-AUDIT, E-EVENT]
+
+  - id: SM-T05
+    from: [IN_PROGRESS]
+    to: VERIFYING
+    event: SUBMITTED
+    actors: [SELLER]
+    guards: [G-AUTH-ACTIVE, G-EVIDENCE-PRESENT]
+    effects: [E-START-RUN, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T06
+    from: [VERIFYING]
+    to: IN_PROGRESS
+    event: VERIFICATION_FAILED
+    actors: [SYSTEM]
+    guards: [G-RUN-COMPLETE, G-NOT-RELEASABLE, G-NOTHING-RELEASED]
+    effects: [E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T07
+    from: [VERIFYING]
+    to: OBJECTION_WINDOW
+    event: VERIFICATION_PASSED
+    actors: [SYSTEM]
+    guards: [G-RUN-COMPLETE, G-RELEASABLE, G-PASS-HAS-EVIDENCE, G-AUTH-ACTIVE]
+    effects: [E-OPEN-WINDOW, E-REAUTHORIZE-IF-NEEDED, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T08
+    from: [OBJECTION_WINDOW]
+    to: RELEASED
+    event: BUYER_APPROVED
+    actors: [BUYER]
+    guards: [G-NO-OPEN-OBJECTION, G-REQUIRED-COUNTED, G-RELEASE-POSITIVE, G-ALL-COUNTED, G-NO-RELEASE-IN-FLIGHT, G-AUTH-ACTIVE]
+    effects: [E-CAPTURE, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T09
+    from: [OBJECTION_WINDOW]
+    to: RELEASED
+    event: WINDOW_EXPIRED
+    actors: [SYSTEM]
+    guards: [G-WINDOW-ELAPSED, G-NO-OPEN-OBJECTION, G-SILENCE-IS-APPROVAL, G-REQUIRED-COUNTED, G-RELEASE-POSITIVE, G-ALL-COUNTED, G-NO-RELEASE-IN-FLIGHT, G-AUTH-ACTIVE]
+    effects: [E-CAPTURE, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T10
+    from: [OBJECTION_WINDOW]
+    to: OBJECTED
+    event: OBJECTION_RAISED
+    actors: [BUYER]
+    guards: [G-WINDOW-OPEN, G-OBJECTION-VALID]
+    effects: [E-CANCEL-WINDOW-TIMER, E-SCHEDULE-ESCALATION, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T11
+    from: [OBJECTED]
+    to: VERIFYING
+    event: RESUBMITTED
+    actors: [SELLER]
+    guards: [G-AUTH-ACTIVE, G-EVIDENCE-PRESENT, G-NOT-ESCALATED]
+    effects: [E-SUPERSEDE-OBJECTION, E-CANCEL-ESCALATION, E-START-RUN, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T12
+    from: [OBJECTED]
+    to: RELEASED
+    event: OBJECTION_WITHDRAWN
+    actors: [BUYER]
+    guards: [G-REQUIRED-COUNTED, G-RELEASE-POSITIVE, G-ALL-COUNTED, G-NO-RELEASE-IN-FLIGHT, G-AUTH-ACTIVE]
+    effects: [E-CAPTURE, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T13
+    from: [OBJECTED]
+    to: RELEASED
+    event: REVIEWER_RULED_RELEASE
+    actors: [REVIEWER, ADMIN]
+    guards: [G-OBJECTION-ESCALATED, G-REASON-PRESENT, G-ACTOR-NEUTRAL, G-NO-RELEASE-IN-FLIGHT, G-AUTH-ACTIVE]
+    effects: [E-CAPTURE, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T14
+    from: [OBJECTED]
+    to: VOIDED
+    event: REVIEWER_RULED_VOID
+    actors: [REVIEWER, ADMIN]
+    guards: [G-OBJECTION-ESCALATED, G-REASON-PRESENT, G-ACTOR-NEUTRAL, G-NOTHING-RELEASED]
+    effects: [E-VOID, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T15
+    from: [FUNDED, IN_PROGRESS]
+    to: VOIDED
+    event: CANCELLED_BEFORE_DELIVERY
+    actors: [BUYER, SELLER, ADMIN]
+    guards: [G-NO-SUBMISSION-IN-FLIGHT]
+    effects: [E-VOID, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T16
+    from: [DRAFT, APPROVED]
+    to: VOIDED
+    event: CANCELLED_UNFUNDED
+    actors: [BUYER, SELLER, ADMIN]
+    guards: []
+    effects: [E-VOID, E-CANCEL-TIMERS, E-AUDIT, E-EVENT]
+
+  - id: SM-T17
+    from: [FUNDED, IN_PROGRESS]
+    to: APPROVED
+    event: AUTHORIZATION_LAPSED
+    actors: [SYSTEM]
+    guards: [G-AUTH-EXPIRED]
+    effects: [E-LEDGER, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  # ------------------------------------------------ 1.0.0: proportional release (ADR-0007)
+
+  - id: SM-T18
+    from: [OBJECTION_WINDOW]
+    to: PARTIALLY_RELEASED
+    event: BUYER_APPROVED
+    actors: [BUYER]
+    guards: [G-NO-OPEN-OBJECTION, G-REQUIRED-COUNTED, G-RELEASE-POSITIVE, G-SOME-HELD, G-NO-RELEASE-IN-FLIGHT, G-AUTH-ACTIVE]
+    effects: [E-CAPTURE, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T19
+    from: [OBJECTION_WINDOW]
+    to: PARTIALLY_RELEASED
+    event: WINDOW_EXPIRED
+    actors: [SYSTEM]
+    guards: [G-WINDOW-ELAPSED, G-NO-OPEN-OBJECTION, G-SILENCE-IS-APPROVAL, G-REQUIRED-COUNTED, G-RELEASE-POSITIVE, G-SOME-HELD, G-NO-RELEASE-IN-FLIGHT, G-AUTH-ACTIVE]
+    effects: [E-CAPTURE, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T20
+    from: [OBJECTED]
+    to: PARTIALLY_RELEASED
+    event: OBJECTION_WITHDRAWN
+    actors: [BUYER]
+    guards: [G-REQUIRED-COUNTED, G-RELEASE-POSITIVE, G-SOME-HELD, G-NO-RELEASE-IN-FLIGHT, G-AUTH-ACTIVE]
+    effects: [E-CAPTURE, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T21
+    from: [PARTIALLY_RELEASED]
+    to: VERIFYING
+    event: RESUBMITTED
+    actors: [SELLER]
+    guards: [G-AUTH-ACTIVE, G-EVIDENCE-PRESENT, G-NO-RELEASE-IN-FLIGHT]
+    effects: [E-START-RUN, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T22
+    from: [PARTIALLY_RELEASED]
+    to: CLOSED
+    event: REMAINDER_RETURNED
+    actors: [SELLER, ADMIN]
+    guards: [G-NO-RELEASE-IN-FLIGHT]
+    effects: [E-VOID, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T23
+    from: [VERIFYING]
+    to: PARTIALLY_RELEASED
+    event: VERIFICATION_FAILED
+    actors: [SYSTEM]
+    guards: [G-RUN-COMPLETE, G-NOT-RELEASABLE, G-SOME-RELEASED]
+    effects: [E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T24
+    from: [OBJECTION_WINDOW]
+    to: IN_PROGRESS
+    event: WINDOW_EXPIRED_NOTHING_COUNTED
+    actors: [SYSTEM]
+    guards: [G-WINDOW-ELAPSED, G-NO-OPEN-OBJECTION, G-NOTHING-COUNTED, G-NOTHING-RELEASED]
+    effects: [E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T25
+    from: [OBJECTION_WINDOW]
+    to: PARTIALLY_RELEASED
+    event: WINDOW_EXPIRED_NOTHING_COUNTED
+    actors: [SYSTEM]
+    guards: [G-WINDOW-ELAPSED, G-NO-OPEN-OBJECTION, G-NOTHING-COUNTED, G-SOME-RELEASED]
+    effects: [E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T26
+    from: [PARTIALLY_RELEASED]
+    to: IN_PROGRESS
+    event: RELEASE_DECLINED
+    actors: [SYSTEM]
+    guards: [G-NOTHING-RELEASED]
+    effects: [E-AUDIT, E-EVENT, E-NOTIFY]
+
+  # ------------------------------------------------ 2.3.0: the way out of an objection (ADR-0014)
+
+  - id: SM-T27
+    from: [OBJECTED]
+    to: CLOSED
+    event: REVIEWER_RULED_RETURN
+    actors: [REVIEWER, ADMIN]
+    guards: [G-OBJECTION-ESCALATED, G-REASON-PRESENT, G-ACTOR-NEUTRAL, G-SOME-RELEASED, G-NO-RELEASE-IN-FLIGHT]
+    effects: [E-VOID, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T28
+    from: [OBJECTED]
+    to: VOIDED
+    event: SELLER_SURRENDERED
+    actors: [SELLER]
+    guards: [G-NOTHING-RELEASED]
+    effects: [E-VOID, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+  - id: SM-T29
+    from: [OBJECTED]
+    to: CLOSED
+    event: SELLER_SURRENDERED
+    actors: [SELLER]
+    guards: [G-SOME-RELEASED, G-NO-RELEASE-IN-FLIGHT]
+    effects: [E-VOID, E-CANCEL-TIMERS, E-AUDIT, E-EVENT, E-NOTIFY]
+
+# Effects that move money. A transition not listed here must never emit them.
+# Release transitions emit E-CAPTURE; return transitions emit E-VOID (constitution II).
+moneyEffects:
+  E-CAPTURE: [SM-T08, SM-T09, SM-T12, SM-T13, SM-T18, SM-T19, SM-T20]
+  E-VOID: [SM-T14, SM-T15, SM-T16, SM-T22, SM-T27, SM-T28, SM-T29]

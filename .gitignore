@@ -1,0 +1,35 @@
+# Node
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+coverage/
+.cli-dist/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Environment files and secrets: never committed
+.env
+.env.*
+!.env.example
+*.pem
+*.tfvars
+*.tfstate
+*.tfstate.*
+
+# OS and editors
+.DS_Store
+.idea/
+
+# Local tool state
+.vercel/
+.claude/
+
+# Output of the AI evaluator harness, which may quote fixture content
+apps/engine/evals/last-run.json

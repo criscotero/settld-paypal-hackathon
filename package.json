@@ -1,0 +1,33 @@
+{
+  "name": "settld",
+  "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "verify:contracts": "uv run scripts/verify_contracts.py .",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d --wait postgres",
+    "db:verify": "scripts/verify_db_roles.sh",
+    "db:migrate": "pnpm --filter @settld/api --filter @settld/engine db:migrate",
+    "db:seed": "pnpm --filter @settld/api db:seed",
+    "db:demo": "scripts/demo_db.sh",
+    "api:demo": "scripts/api_demo.sh",
+    "engine:worker": "scripts/engine-worker.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.12.0",
+    "globals": "17.13.0",
+    "turbo": "2.11.8",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2"
+  },
+  "type": "module"
+}

@@ -1,0 +1,167 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792092872301,
+      "tag": "0000_h1_contracts",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792092875615,
+      "tag": "0001_immutability_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792092875616,
+      "tag": "0002_rename_parties_buyer_seller",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792287367432,
+      "tag": "0003_onboarding_profile_paypal",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792345232740,
+      "tag": "0004_h2_partial_release",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792345248128,
+      "tag": "0005_h2_money_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792348491265,
+      "tag": "0006_pgboss_install",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792439599567,
+      "tag": "0007_release_counted_criteria",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792439600154,
+      "tag": "0008_release_revert_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792855975135,
+      "tag": "0009_professional_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792860273579,
+      "tag": "0010_contract_parties",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793303770380,
+      "tag": "0011_holds",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793303776442,
+      "tag": "0012_hold_money_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793558788143,
+      "tag": "0013_service_tokens_and_inbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793902507076,
+      "tag": "0014_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793908849397,
+      "tag": "0015_short_aaron_stack",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793910130618,
+      "tag": "0016_vengeful_bucky",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793912427943,
+      "tag": "0017_chunky_starfox",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793917805803,
+      "tag": "0018_smiling_gressill",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793922231157,
+      "tag": "0019_productive_crystal",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793927596852,
+      "tag": "0020_round_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793995378486,
+      "tag": "0021_vengeful_valkyrie",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794054930046,
+      "tag": "0022_delivery_files",
+      "breakpoints": true
+    }
+  ]
+}
