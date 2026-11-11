@@ -7,7 +7,7 @@ const FIELD: Record<string, string> = {
   dueDate: "due date",
   amount: "amount",
   checkType: "verification",
-  checkConfig: "verification settings",
+  checkConfig: "what to check",
   weightBps: "weight",
 };
 

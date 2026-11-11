@@ -35,7 +35,7 @@ Settld turns "done" into checks that both sides agree on before any money moves:
 5. **Decide.** A visible countdown of at least 60 seconds opens. The buyer can approve, object, or let it run out. **An AI verdict alone never moves money.**
 6. **Release.** **PayPal captures only the share that was earned** and pays each team member their split. What was not earned stays reserved or goes back to the buyer.
 
-Everyone gets a settlement receipt with the PayPal IDs, and a payments ledger, built on **AG Grid**, shows every PayPal fact across contracts.
+Everyone gets a settlement receipt with the PayPal IDs, and a payments ledger, built on **AG Grid**, shows every PayPal fact across contracts. Email notifications, already working in production, tell each party when it is their turn: invitations, locked agreements, countdowns, decisions, objections and rulings, in English and Spanish.
 
 **Built during the hackathon:** the first commit is from October 8, 2026. This repository is a clean public snapshot of the private development repository; [development-history.md](development-history.md) shows when the work happened.
 
@@ -65,7 +65,7 @@ Everyone gets a settlement receipt with the PayPal IDs, and a payments ledger, b
 - **Unsupported verdicts are downgraded.** A check that does not quote the agreed text is dropped. A `PASS` without its own evidence, or near a prompt-injection signal, drops to `UNCERTAIN`.
 - **Delivered content is treated as untrusted data.** Hidden instructions hold the milestone and are shown to the buyer, quoted.
 
-**AG Grid** powers six views: the payments ledger (filters, totals per currency, CSV export); the AI audit (one row per check, with its quote, evidence hashes, and injection flags); "Money about to move" (a live countdown per milestone, driven by the server's clock); the criteria editor; the reviewer queue; and "Who gets what" (a collaborator sees only their own row). The ledger, the criteria editor and "Who gets what" were checked in the browser with real sandbox data; the AI audit, countdown and reviewer-queue grids are covered by tests and were seen with sample data only.
+**AG Grid** powers six views: the payments ledger (filters, totals per currency, CSV export); the AI audit (one row per check, with its quote, evidence hashes, and injection flags); "Money about to move" (a live countdown per milestone, driven by the server's clock); the criteria editor; the reviewer queue; and "Who gets what" (a collaborator sees only their own row). The ledger, the criteria editor, "Who gets what" and the AI audit were checked in the browser with real sandbox data; the countdown and reviewer-queue grids are covered by tests and were seen with sample data only.
 
 **Stack:** Next.js 16 and React 19 on Vercel; a NestJS Core API, a FastAPI Engine, and PostgreSQL 18 in one container on AWS Lightsail; Clerk for sign-in. Durable jobs and timers (pg-boss, Procrastinate) mean a restart never loses a release. Core and the Engine talk over short-lived Ed25519-signed calls.
 
@@ -77,7 +77,7 @@ Everyone gets a settlement receipt with the PayPal IDs, and a payments ledger, b
 
 ### Accomplishments that we're proud of
 
-- **Real PayPal sandbox money flow, end to end:** authorize → verify → partial capture → paid directly to each team member, with PayPal IDs on every receipt. Run end to end against the PayPal sandbox on a local deployment on 2026-11-05 and 2026-11-07; the full signed-in journey has not been re-run on the live demo since its 2026-11-09 deployment.
+- **Real PayPal sandbox money flow, end to end:** authorize → verify → partial capture → paid directly to each team member, with PayPal IDs on every receipt. Run end to end against the PayPal sandbox on a local deployment on 2026-11-05 and 2026-11-07, and on the live demo on 2026-11-11, the run shown in the demo video.
 - **The evaluator agent matched the expected verdict on 16 of 16 test cases, in two runs,** at about USD 0.02 per criterion. The cases cover sites, repositories, `.zip` files, a PDF, and four prompt-injection attempts. See [ai-evaluation.md](ai-evaluation.md).
 - **More than 1,000 automated tests** across the web (300), Core API (231 unit and 330 end-to-end), and Engine (226).
 - **Money rules enforced in the backend, not only on screen:** Settld never holds funds, an AI opinion alone never releases money, and no money moves without a visible countdown.
@@ -86,7 +86,7 @@ Everyone gets a settlement receipt with the PayPal IDs, and a payments ledger, b
 
 - PayPal's authorize-then-capture model is a natural fit for escrow **without custody**: the platform decides when, and PayPal moves the money.
 - The most useful thing an LLM can do here is not decide. It reads and explains with evidence, and deterministic code turns that into a verdict.
-- Durable timers, idempotency keys, and an outbox are what make "the money moved exactly once" true after a crash or a retry.
+- Durable timers and idempotency keys are what make "the money moved exactly once" true after a crash or a retry.
 
 ### What's next for Settld
 
@@ -119,7 +119,7 @@ All of these are **(planned)**; none exists in the product today.
 > | **Objections to review** | `/review`, for an approved neutral reviewer | Escalated disputes, oldest first, with the money still held in PayPal |
 > | **Payments** ledger | Top menu | Every authorization, capture, void, and refund, with its PayPal id, the criteria it paid for, totals per currency, and a CSV export |
 >
-> "What the AI checked", "Money about to move" and "Objections to review" are covered by tests and were seen with sample data, not yet with live data.
+> "What the AI checked" ran with live data on the live demo on 2026-11-11 (it appears in the demo video). "Money about to move" and "Objections to review" are covered by tests and were seen with sample data, not yet with live data.
 >
 > Grid-by-grid steps: [AG Grid walkthrough](../README.md#ag-grid-walkthrough-six-grids).
 
@@ -135,7 +135,7 @@ All of these are **(planned)**; none exists in the product today.
 |---|---|
 | Demo URL | <https://settld.altamiratechlabs.com> |
 | Repository | <https://github.com/criscotero/settld-paypal-hackathon> |
-| Video | To be added |
+| Video | <https://youtu.be/p48MGIWtXQo> |
 
 ## 8. Testing instructions
 

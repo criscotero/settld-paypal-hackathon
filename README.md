@@ -7,6 +7,7 @@ Settld is a referee for paid work. A buyer and a seller agree on what "done" mea
 | | |
 |---|---|
 | **Live demo** | <https://settld.altamiratechlabs.com> (PayPal **sandbox**: no real money moves) |
+| **Demo video** | <https://youtu.be/p48MGIWtXQo> (2:53): one $10 contract from agreement to a partial PayPal capture |
 | **Built for** | [PayPal AI Hackathon](https://paypalaihackathon.devpost.com), from 2026-10-08 ([development history](docs/development-history.md)) |
 | **Built with** | PayPal Orders v2 and Payments v2, PayPal Partner Referrals, Claude API, AG Grid Community, Clerk, Next.js, NestJS, FastAPI, PostgreSQL |
 | **License** | [Apache License 2.0](LICENSE) |
@@ -65,7 +66,7 @@ Every feature below is in one of three states. Only the first is presented as op
 **How it was verified (2026-11-09, commit on `main` deployed to the live demo):**
 - **Automated tests:** web 300 passed; Core API 231 unit tests passed and 330 end-to-end tests passed; Engine 226 passed (68 database tests skipped in that run).
 - **End-to-end runs against the PayPal sandbox** on a local deployment, on 2026-11-05 and 2026-11-07, with the demo accounts.
-- **Live demo:** the landing page, sign-up, and the protected pages respond as expected. The full signed-in journey has **not** been re-run on the live demo since the 2026-11-09 deployment.
+- **Live demo:** the full signed-in journey ran end to end on the live demo on 2026-11-11, with the demo accounts and the PayPal sandbox: a contract with weighted criteria, the invitation email, the team split, the locked agreement, the PayPal authorization, a GitHub delivery, the AI audit, a partial capture paid to two team members, the receipt and the ledger. The [demo video](https://youtu.be/p48MGIWtXQo) shows that run. Objections and the reviewer flow have not been run there.
 
 ### Implemented and verified
 
@@ -81,19 +82,18 @@ Every feature below is in one of three states. Only the first is presented as op
 | **Manipulation flag** | Delivered content that tries to instruct the AI is treated as data, flagged, and quoted to the buyer | Tests; 4 manipulation cases in the evaluation |
 | **Proportional release** | Each criterion pays its weight when it counts. Required criteria must pass before anything is paid. Paid + still held + returned always equals what was funded | Tests, including money-invariant tests |
 | **Countdown and decision** | A countdown of at least 60 seconds before money moves. The buyer approves, objects, or lets it end | Tests; sandbox runs |
-| **Objections and neutral reviewers** | The buyer asks for a fix. The third objection on a milestone goes to a neutral reviewer, who rules to pay or return the money. Users apply to be reviewers; an admin decides | Tests |
+| **Objections and neutral reviewers** | The buyer asks for a fix. The third objection on a milestone, or five days without a settlement, goes to a neutral reviewer, who rules to pay or return the money. See [When the buyer and seller disagree](#when-the-buyer-and-seller-disagree) | Tests; not yet run on the live demo |
 | **Open projects** | A buyer publishes a contract for any seller to take, listed for 30 days | Tests |
 | **Settlement receipt** | Per milestone: funded, paid, still held, returned, who was paid, and the PayPal capture ids | Code; sandbox runs |
 | **Payments ledger (AG Grid)** | Every PayPal fact across contracts, with filters, totals per currency, a detail panel, and CSV export | Tests; checked in the browser |
 | **Criteria editor and "Who gets what" (AG Grid)** | Edit criteria as a table; see each member's part of every milestone (a collaborator sees only their own) | Tests; checked in the browser |
+| **Email notifications** | Invitations, locked agreements, countdowns, decisions, objections and rulings, in English and Spanish. Each email is sent once, even if a job runs twice | Tests; working in production on the live demo |
 
 ### Implemented, not fully verified
 
 | Feature | Status |
 |---|---|
-| **The full signed-in journey on the live demo** | Configured with the PayPal sandbox and the Claude API. Last run end-to-end before the 2026-11-09 deployment; to be re-run |
-| **AI audit, release countdown and reviewer queue grids (AG Grid)** | Covered by unit and component tests, and seen with sample data. Not yet seen with live data |
-| **Email notifications** | Invitations, agreements, countdowns, decisions, objections and rulings, in English and Spanish. Covered by tests; delivery from the live demo not verified |
+| **Release countdown and reviewer queue grids (AG Grid)** | Covered by unit and component tests, and seen with sample data. Not yet seen with live data. (The AI audit grid ran with live data on the live demo on 2026-11-11.) |
 
 ### Planned
 
@@ -187,6 +187,38 @@ flowchart TD
   S8 --> S9[PayPal pays each person their share]
   S9 --> S10[Receipt and payments ledger]
 ```
+
+### When the buyer and seller disagree
+
+The AI never settles a dispute. Every disagreement ends with a decision by a person, and the money stays reserved in the buyer's PayPal account until then: nothing is captured while a case is open.
+
+Most disagreements never become disputes. When only part of the work passes, the buyer can approve that part, and the seller either fixes the rest or accepts the partial payment.
+
+```mermaid
+flowchart TD
+  W[Countdown running] -->|buyer approves| P[PayPal pays what counts]
+  W -->|buyer asks for a fix| O[Objection open: the money stays reserved]
+  O -->|seller delivers the fix| V[Settld checks it again]
+  V --> W
+  O -->|buyer withdraws the objection| P
+  O -->|third objection, or 5 days without a settlement| E[Escalated to a neutral reviewer]
+  E -->|reviewer: pay the seller| P
+  E -->|reviewer: return to the buyer| B[PayPal returns the reserved money]
+  E -->|seller gives up| B
+```
+
+| Step | Who | What happens |
+|---|---|---|
+| **Ask for a fix** | Buyer, during the countdown | **Ask the seller to fix it**: tick the criteria that are not done and give a reason of at least 20 characters. Nothing is paid |
+| **Fix** | Seller | **Deliver the fix**. Settld verifies the new delivery, and a new countdown follows |
+| **Withdraw** | Buyer | **Withdraw the objection and release**: what counts is paid |
+| **Escalate** | Automatic | The buyer's **third objection** on the same milestone, or **five days** without a settlement, sends the case to a neutral reviewer: "A neutral reviewer will decide this. The money stays reserved until then." From then on the seller cannot answer by delivering again |
+| **Rule** | Reviewer | In **Objections to review**, an AG Grid queue with the waiting time and the amount held, the reviewer opens the case, chooses **Pay $X to the seller** or **Return $X to the buyer**, and records a reason of at least 20 characters. PayPal then pays or returns the reserved money |
+| **Give up** | Seller, after an escalation | **Return everything to the buyer**, or **Keep what was paid and return the rest** |
+
+**Who the reviewers are.** Reviewers, called "Settlers" in the app, are people, not AI. Anyone can apply, with the "Be a Settler" box in onboarding or **Apply to be a Settler** on Profile. An admin approves each application, and an applicant has no reviewer permissions until then. A reviewer only sees cases on contracts they are not part of; anyone else who opens `/review` gets "not found".
+
+**Status.** Built and covered by tests, but not yet run on the live demo. There is no admin login for the demo, so judges cannot approve a reviewer themselves. Assigning a reviewer to a specific dispute, and paying reviewers, are planned, not built. To try it: [Test scenarios](#test-scenarios) P-6 to P-9 and R-1 to R-4.
 
 ### AG Grid walkthrough: six grids
 

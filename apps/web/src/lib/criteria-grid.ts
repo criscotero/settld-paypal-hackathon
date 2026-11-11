@@ -70,6 +70,17 @@ export function patchForSetting(c: CriterionFields, value: string): Partial<Pick
   return {};
 }
 
+// The AI check's optional "page to read" (empty: the link in the delivery). The cards show it, so the
+// grid does too, in its own column. Null for the other checks: an HTTP probe keeps its URL in the
+// settings cell, and showing the same probeUrl twice would read as two different URLs.
+export function pageToReadOf(c: Pick<CriterionFields, "level" | "probeUrl">): string | null {
+  return c.level === "AI_EVALUATED" ? c.probeUrl : null;
+}
+
+export function patchForPageToRead(c: Pick<CriterionFields, "level">, value: string): Partial<Pick<CriterionFields, "probeUrl">> {
+  return c.level === "AI_EVALUATED" ? { probeUrl: value } : {};
+}
+
 // The same limits the cards put on their inputs (required, minLength 10 for the guidance).
 export function rowIssues(c: CriterionFields): string[] {
   const issues: string[] = [];

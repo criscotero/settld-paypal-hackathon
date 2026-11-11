@@ -7,15 +7,19 @@ import type { ColDef, ICellRendererParams, ValueSetterParams } from "ag-grid-com
 import { AgGridReact } from "ag-grid-react";
 import { CircleAlert, CircleCheck, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { CHECK_CHOICES, checkChoiceOf, patchForChoice, patchForSetting, rowIssues, settingLabel, settingOf } from "@/lib/criteria-grid";
+import { CHECK_CHOICES, checkChoiceOf, pageToReadOf, patchForChoice, patchForPageToRead, patchForSetting, rowIssues, settingLabel, settingOf } from "@/lib/criteria-grid";
 import type { CriterionFields } from "@/lib/criteria-grid";
 import { ALWAYS_HAS_ROWS, settldGridTheme } from "./grid-theme";
 
 // An editor hands back what was typed, or null when the cell was cleared.
 const asText = (v: unknown): string => (typeof v === "string" ? v : "");
 
-// Wrapped cells read as text, not as rows of the grid's tall single-line height.
-const WRAPPED = "leading-5! py-2!";
+// Wrapped cells read as text, not as rows of the grid's tall single-line height. AG Grid's wrapText
+// sets white-space: normal, which folds a typed line break into a space: pre-wrap keeps the lines the
+// buyer wrote. wrap-anywhere breaks a long URL, which has no spaces and would run under the next cell.
+const WRAPPED = "leading-5! py-2! whitespace-pre-wrap! wrap-anywhere";
+// The cells' "nothing here" voice, the same in the "What to check" and "Page to read" columns.
+const EMPTY = "text-slate-400 italic";
 
 export type GridCriterion = CriterionFields & { rationale?: string | undefined };
 type Patch = Partial<Pick<CriterionFields, "text" | "level" | "checkType" | "probeUrl" | "guidance" | "weight" | "required">>;
@@ -30,6 +34,18 @@ type Props = {
   // Null while the milestone has one criterion: a milestone needs at least one.
   onRemove: ((key: number) => void) | null;
 };
+
+// The criterion, and under it the compiler's reason, in sight like in the cards: a tooltip is easy to
+// miss and never shows on a touch screen. The editor still edits only the text (the valueGetter).
+function CriterionCell({ data, value }: ICellRendererParams<GridCriterion, string>) {
+  if (data === undefined) return null;
+  return (
+    <div>
+      <span>{value}</span>
+      {data.rationale !== undefined && data.rationale !== "" && <span className="mt-1 block text-xs text-slate-500">Why: {data.rationale}</span>}
+    </div>
+  );
+}
 
 // An icon with words for screen readers and a tooltip, so the grid fits the form's column.
 function StatusCell({ data }: ICellRendererParams<GridCriterion>) {
@@ -61,17 +77,21 @@ export function CriteriaGrid({ criteria, codes, onChange, onRemove, registerFlus
       valueGetter: ({ data }) => data?.text ?? "",
       valueSetter: set((_c, v) => ({ text: asText(v) })),
       editable: true,
-      cellEditor: "agTextCellEditor",
-      cellEditorParams: { maxLength: 500 },
+      // A popup with room for all 500 characters: the in-cell editor is one line as wide as the
+      // column, so a long criterion scrolled out of sight while it was being edited.
+      cellEditor: "agLargeTextCellEditor",
+      cellEditorPopup: true,
+      cellEditorParams: { maxLength: 500, rows: 4, cols: 50 },
       // The compiler's reason stays visible until the buyer edits the criterion, like in the cards.
-      tooltipValueGetter: ({ data }) => (data?.rationale ? `Why: ${data.rationale}` : undefined),
+      cellRenderer: CriterionCell,
       cellClassRules: { "bg-red-50!": ({ data }) => data !== undefined && data.text.trim() === "" },
-      // Wrapped, not cut: the buyer must see the whole criterion they are agreeing to.
+      // Wrapped, not cut: the buyer must see the whole criterion they are agreeing to. It gets the
+      // most room, and a floor so it never shrinks to a word per line: below it the grid scrolls.
       wrapText: true,
       autoHeight: true,
       cellClass: WRAPPED,
-      flex: 2,
-      minWidth: 130,
+      flex: 3,
+      minWidth: 200,
     },
     {
       colId: "check",
@@ -88,7 +108,7 @@ export function CriteriaGrid({ criteria, codes, onChange, onRemove, registerFlus
     },
     {
       colId: "setting",
-      headerName: "Settings",
+      headerName: "What to check",
       valueGetter: ({ data }) => (data === undefined ? "" : settingOf(data)),
       valueFormatter: ({ data, value }) => {
         if (data === undefined) return "";
@@ -100,13 +120,36 @@ export function CriteriaGrid({ criteria, codes, onChange, onRemove, registerFlus
       editable: ({ data }) => data !== undefined && settingLabel(data) !== null,
       // Guidance can be long: a popup editor with room for it. The URL fits in the cell.
       cellEditorSelector: ({ data }) => (data.level === "AI_EVALUATED" ? { component: "agLargeTextCellEditor", popup: true, params: { maxLength: 2000, rows: 6, cols: 50 } } : { component: "agTextCellEditor", params: { maxLength: 2048 } }),
-      cellClassRules: { "text-slate-400 italic": ({ data }) => data !== undefined && settingOf(data) === "" },
-      tooltipValueGetter: ({ data }) => (data === undefined ? undefined : settingOf(data) || undefined),
+      cellClassRules: { [EMPTY]: ({ data }) => data !== undefined && settingOf(data) === "" },
       wrapText: true,
       autoHeight: true,
       cellClass: WRAPPED,
       flex: 2,
+      minWidth: 160,
+    },
+    {
+      // In the cards since the AI check exists; the grid left it out, so a buyer who switched views
+      // could not see which page the AI would read. Same field (probeUrl), same empty meaning.
+      colId: "pageToRead",
+      headerName: "Page to read",
+      headerTooltip: "The page the AI check reads. Empty: the link in the seller's delivery.",
+      valueGetter: ({ data }) => (data === undefined ? null : pageToReadOf(data)),
+      valueFormatter: ({ value }) => {
+        if (value === null) return "Not used";
+        return (value as string) === "" ? "The link in the delivery" : (value as string);
+      },
+      valueSetter: set((c, v) => patchForPageToRead(c, asText(v))),
+      editable: ({ data }) => data !== undefined && pageToReadOf(data) !== null,
+      cellEditor: "agTextCellEditor",
+      cellEditorParams: { maxLength: 2048 },
+      cellClassRules: { [EMPTY]: ({ value }) => value === null || value === "" },
+      wrapText: true,
+      autoHeight: true,
+      cellClass: WRAPPED,
+      // A URL is worth reading whole, but a wide column of "Not used" would push the criterion aside.
+      flex: 1,
       minWidth: 130,
+      maxWidth: 240,
     },
     {
       colId: "weight",

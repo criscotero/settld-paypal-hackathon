@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHECK_CHOICES, checkChoiceOf, patchForChoice, patchForSetting, rowIssues, settingLabel, settingOf, submitWhenSettled, updateCriterion } from "./criteria-grid";
+import { CHECK_CHOICES, checkChoiceOf, pageToReadOf, patchForChoice, patchForPageToRead, patchForSetting, rowIssues, settingLabel, settingOf, submitWhenSettled, updateCriterion } from "./criteria-grid";
 import type { CriterionFields } from "./criteria-grid";
 
 const row = (over: Partial<CriterionFields> = {}): CriterionFields => ({ key: 1, text: "The page answers 200", level: "AUTOMATIC", checkType: "HTTP_PROBE", probeUrl: "https://acme.dev", guidance: "", weight: "70", required: true, ...over });
@@ -38,6 +38,22 @@ describe("the settings cell", () => {
   it("writes back to the field the form submits, and only that one", () => {
     expect(patchForSetting(row(), "https://acme.dev/health")).toEqual({ probeUrl: "https://acme.dev/health" });
     expect(patchForSetting(row({ level: "AI_EVALUATED", checkType: "AI_FEATURE_PRESENT" }), "A contact form")).toEqual({ guidance: "A contact form" });
+  });
+});
+
+describe("the page-to-read cell (shown in the cards, so in the grid too)", () => {
+  it("is the AI check's optional page, and nothing for the other checks", () => {
+    const ai = row({ level: "AI_EVALUATED", checkType: "AI_FEATURE_PRESENT", probeUrl: "https://acme.dev/pricing" });
+    expect(pageToReadOf(ai)).toBe("https://acme.dev/pricing");
+    // An HTTP probe's URL is its setting, not a page for the AI: it must not show twice.
+    expect(pageToReadOf(row())).toBeNull();
+    expect(pageToReadOf(row({ level: "HUMAN", checkType: "" }))).toBeNull();
+  });
+
+  it("writes the probe URL only for an AI check", () => {
+    const ai = row({ level: "AI_EVALUATED", checkType: "AI_FEATURE_PRESENT", probeUrl: "" });
+    expect(patchForPageToRead(ai, "https://acme.dev/plans")).toEqual({ probeUrl: "https://acme.dev/plans" });
+    expect(patchForPageToRead(row(), "https://other.dev")).toEqual({});
   });
 });
 
