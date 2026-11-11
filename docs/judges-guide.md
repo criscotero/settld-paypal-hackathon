@@ -2,13 +2,13 @@
 
 **Work verified. Money settled.**
 
-**Demo video (2:53):** <https://youtu.be/U7yK8hcebUU>
+**Demo video (2:53):** <https://www.youtube.com/watch?v=hVVTu4w4ffE>
 
 This guide explains how to read, test and run Settld. It covers the live demo and a local setup, and lists every demo user with its role. **The credentials for the demo accounts are in the Devpost testing instructions.** They are not in this repository.
 
 > **Sandbox only.** PayPal runs in sandbox and Clerk runs as a development instance. No real money moves, and every person and company in the demo profiles is invented.
 
-**What is verified.** The flow in section 5 was run end to end against the PayPal sandbox on a local deployment (2026-11-05 and 2026-11-07). On the live demo, the full signed-in journey ran end to end on 2026-11-11: contract, invitation, PayPal sandbox authorization, delivery, AI audit, partial capture, receipt and ledger. The [demo video](https://youtu.be/U7yK8hcebUU) shows that run. The README's [What works today](../README.md#2-what-works-today) lists the status of every feature.
+**What is verified.** The flow in section 5 was run end to end against the PayPal sandbox on a local deployment (2026-11-05 and 2026-11-07). On the live demo, the full signed-in journey ran end to end on 2026-11-11: contract, invitation, PayPal sandbox authorization, delivery, AI audit, partial capture, receipt and ledger. The [demo video](https://www.youtube.com/watch?v=hVVTu4w4ffE) shows that run. The README's [What works today](../README.md#2-what-works-today) lists the status of every feature.
 
 ---
 
@@ -45,7 +45,7 @@ Settld never holds the money, and an AI verdict alone never moves money.
 
 | Item | Value |
 |---|---|
-| **Demo video** | <https://youtu.be/U7yK8hcebUU> (2:53). Watch it first to see the whole flow before you try it |
+| **Demo video** | <https://www.youtube.com/watch?v=hVVTu4w4ffE> (2:53). Watch it first to see the whole flow before you try it |
 | **Web app** | <https://settld.altamiratechlabs.com> |
 | **API** | `https://api.settld.altamiratechlabs.com/v1` (the web app calls it; it needs a session) |
 | **Sign-in** | Clerk development instance. The sign-in page shows a "Development mode" badge, which is expected. |

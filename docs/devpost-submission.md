@@ -84,7 +84,7 @@ Everyone gets a settlement receipt with the PayPal IDs, and a payments ledger, b
 
 ### What we learned
 
-- PayPal's authorize-then-capture model is a natural fit for escrow **without custody**: the platform decides when, and PayPal moves the money.
+- PayPal's authorize-then-capture model is a natural fit for holding a payment **without custody**: the platform decides when, and PayPal moves the money.
 - The most useful thing an LLM can do here is not decide. It reads and explains with evidence, and deterministic code turns that into a verdict.
 - Durable timers and idempotency keys are what make "the money moved exactly once" true after a crash or a retry.
 
@@ -135,7 +135,7 @@ All of these are **(planned)**; none exists in the product today.
 |---|---|
 | Demo URL | <https://settld.altamiratechlabs.com> |
 | Repository | <https://github.com/criscotero/settld-paypal-hackathon> |
-| Video | <https://youtu.be/U7yK8hcebUU> |
+| Video | <https://www.youtube.com/watch?v=hVVTu4w4ffE> |
 
 ## 8. Testing instructions
 
