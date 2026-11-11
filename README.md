@@ -7,7 +7,7 @@ Settld is a referee for paid work. A buyer and a seller agree on what "done" mea
 | | |
 |---|---|
 | **Live demo** | <https://settld.altamiratechlabs.com> (PayPal **sandbox**: no real money moves) |
-| **Demo video** | <https://youtu.be/p48MGIWtXQo> (2:53): one $10 contract from agreement to a partial PayPal capture |
+| **Demo video** | <https://youtu.be/U7yK8hcebUU> (2:53): one $10 contract from agreement to a partial PayPal capture |
 | **Built for** | [PayPal AI Hackathon](https://paypalaihackathon.devpost.com), from 2026-10-08 ([development history](docs/development-history.md)) |
 | **Built with** | PayPal Orders v2 and Payments v2, PayPal Partner Referrals, Claude API, AG Grid Community, Clerk, Next.js, NestJS, FastAPI, PostgreSQL |
 | **License** | [Apache License 2.0](LICENSE) |
@@ -66,7 +66,7 @@ Every feature below is in one of three states. Only the first is presented as op
 **How it was verified (2026-11-09, commit on `main` deployed to the live demo):**
 - **Automated tests:** web 300 passed; Core API 231 unit tests passed and 330 end-to-end tests passed; Engine 226 passed (68 database tests skipped in that run).
 - **End-to-end runs against the PayPal sandbox** on a local deployment, on 2026-11-05 and 2026-11-07, with the demo accounts.
-- **Live demo:** the full signed-in journey ran end to end on the live demo on 2026-11-11, with the demo accounts and the PayPal sandbox: a contract with weighted criteria, the invitation email, the team split, the locked agreement, the PayPal authorization, a GitHub delivery, the AI audit, a partial capture paid to two team members, the receipt and the ledger. The [demo video](https://youtu.be/p48MGIWtXQo) shows that run. Objections and the reviewer flow have not been run there.
+- **Live demo:** the full signed-in journey ran end to end on the live demo on 2026-11-11, with the demo accounts and the PayPal sandbox: a contract with weighted criteria, the invitation email, the team split, the locked agreement, the PayPal authorization, a GitHub delivery, the AI audit, a partial capture paid to two team members, the receipt and the ledger. The [demo video](https://youtu.be/U7yK8hcebUU) shows that run. Objections and the reviewer flow have not been run there.
 
 ### Implemented and verified
 

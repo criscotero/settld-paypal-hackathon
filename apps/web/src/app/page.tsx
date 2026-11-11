@@ -389,8 +389,9 @@ function Audiences() {
 const SETTLER_POINTS = [
   { icon: ClipboardCheck, title: "Review the work", body: "Test the delivery and its evidence against the criteria both sides locked, the way a QA reviewer would." },
   { icon: Scale, title: "Stay neutral", body: "You never rule on a contract you are part of, and every ruling carries your written reason." },
-  // Decided in ADR-0015 but not built yet (its delivery 4). The owner chose to show it without an "In development" mark.
-  { icon: BadgeDollarSign, title: "Earn a commission", body: "Get paid for each ruling you issue: 10% of the contract, up to USD 100, directly through PayPal." },
+  // Decided in ADR-0015 but not built yet (its delivery 4). Marked "Coming soon" (owner, 2026-11-11):
+  // a judge who compares the landing with the README would otherwise find a payout the code never makes.
+  { icon: BadgeDollarSign, title: "Earn a commission", body: "Get paid for each ruling you issue: 10% of the contract, up to USD 100, directly through PayPal.", soon: true },
 ] as const;
 
 function Settlers() {
@@ -427,7 +428,10 @@ function Settlers() {
                 <p.icon className="size-5" aria-hidden />
               </span>
               <div>
-                <h3 className="font-bold text-ink">{p.title}</h3>
+                <h3 className="flex flex-wrap items-center gap-2 font-bold text-ink">
+                  {p.title}
+                  {"soon" in p && <Badge tone="warn">Coming soon</Badge>}
+                </h3>
                 <p className="mt-1 text-sm text-slate-600">{p.body}</p>
               </div>
             </li>

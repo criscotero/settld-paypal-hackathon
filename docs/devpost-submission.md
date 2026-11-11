@@ -135,7 +135,7 @@ All of these are **(planned)**; none exists in the product today.
 |---|---|
 | Demo URL | <https://settld.altamiratechlabs.com> |
 | Repository | <https://github.com/criscotero/settld-paypal-hackathon> |
-| Video | <https://youtu.be/p48MGIWtXQo> |
+| Video | <https://youtu.be/U7yK8hcebUU> |
 
 ## 8. Testing instructions
 
