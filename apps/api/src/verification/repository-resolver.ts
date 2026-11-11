@@ -11,7 +11,14 @@ import { ProblemException } from "../errors/problem.js";
 
 export const REPOSITORY_RESOLVER = Symbol("REPOSITORY_RESOLVER");
 
-const GITHUB = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:\/.*)?$/;
+// Why the suffix is captured instead of ignored: a pull request (/pull/12), branch (/tree/x) or
+// file (/blob/...) link used to resolve to the default branch's head, so the seller believed the
+// PR was checked while the verdict was about main. Now only a bare repository link or a
+// /commit/<sha> link (which pins that commit) is accepted; anything else is refused before any
+// call to GitHub. Resolving a PR's head was the alternative, but it needs a second API call and
+// a rule for PRs from forks, which is more than this deadline allows.
+const GITHUB = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(\/.*)?$/;
+const COMMIT_SUFFIX = /^\/commit\/([0-9a-f]{40})\/?$/;
 const SHA = /^[0-9a-f]{40}$/;
 
 export interface ResolvedRepository {
@@ -53,11 +60,16 @@ export class GitHubRepositoryResolver implements RepositoryResolver {
   async resolve(url: string, commitSha: string | null | undefined): Promise<ResolvedRepository> {
     const match = GITHUB.exec(url);
     if (match === null) throw unreadable("The link is not a GitHub repository.");
-    const [, owner, name] = match as unknown as [string, string, string];
+    const [, owner, name, suffix = ""] = match as unknown as [string, string, string, string | undefined];
+    const named = commitSha !== null && commitSha !== undefined && SHA.test(commitSha) ? commitSha : null;
+    const linked = COMMIT_SUFFIX.exec(suffix)?.[1] ?? null;
+    if (suffix !== "" && suffix !== "/" && linked === null && named === null) {
+      throw unreadable("The link points to a pull request, branch or file, not to the repository. Paste the repository link (https://github.com/owner/name) or a /commit/<sha> link.");
+    }
     const repo = await this.get(`/repos/${owner}/${name}`);
     if (repo.private === true) throw unreadable("It is private.");
-    // A commit the seller named is kept if it exists; otherwise the default branch's head.
-    const ref = commitSha !== null && commitSha !== undefined && SHA.test(commitSha) ? commitSha : (typeof repo.default_branch === "string" ? repo.default_branch : "");
+    // A commit the seller named (or linked) is kept if it exists; otherwise the default branch's head.
+    const ref = named ?? linked ?? (typeof repo.default_branch === "string" ? repo.default_branch : "");
     if (ref === "") throw unreadable("It has no default branch.");
     const commit = await this.get(`/repos/${owner}/${name}/commits/${encodeURIComponent(ref)}`);
     const sha = typeof commit.sha === "string" ? commit.sha : "";

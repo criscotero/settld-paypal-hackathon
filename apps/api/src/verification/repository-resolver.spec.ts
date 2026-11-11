@@ -46,6 +46,33 @@ describe("GitHubRepositoryResolver", () => {
     expect(seen.at(-1)).toContain(NAMED);
   });
 
+  it("accepts the repository link with a trailing slash", async () => {
+    const { resolver } = github({
+      "/repos/acme/site": { body: { private: false, default_branch: "main" } },
+      "/repos/acme/site/commits/main": { body: { sha: HEAD } },
+    });
+    expect((await resolver.resolve("https://github.com/acme/site/", null)).commitSha).toBe(HEAD);
+  });
+
+  it("pins the commit in a /commit/<sha> link instead of the branch head", async () => {
+    const { resolver, seen } = github({
+      "/repos/acme/site": { body: { private: false, default_branch: "main" } },
+      [`/repos/acme/site/commits/${NAMED}`]: { body: { sha: NAMED } },
+    });
+    expect((await resolver.resolve(`https://github.com/acme/site/commit/${NAMED}`, null)).commitSha).toBe(NAMED);
+    expect(seen.at(-1)).toContain(NAMED);
+  });
+
+  it("refuses a pull request, branch or file link without asking GitHub, so the default branch is never checked by mistake", async () => {
+    for (const link of ["https://github.com/acme/site/pull/12", "https://github.com/acme/site/tree/feature", "https://github.com/acme/site/blob/main/index.html"]) {
+      const { resolver, seen } = github({});
+      const problem = await problemOf(resolver.resolve(link, null));
+      expect(problem.code).toBe("REPOSITORY_UNREADABLE");
+      expect(problem.message + JSON.stringify(problem)).toContain("repository link");
+      expect(seen).toEqual([]);
+    }
+  });
+
   it("refuses a link that is not GitHub", async () => {
     const { resolver, seen } = github({});
     const problem = await problemOf(resolver.resolve("https://gitlab.com/acme/site", null));
